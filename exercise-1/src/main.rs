@@ -35,7 +35,7 @@ impl<'a> RoadNetwork {
                             road_way_counter += 1;
                             arc_counter_by_way_lens += way.nodes.iter().len() - 1;
                             let speed = RoadNetwork::speed(road_type);
-                            for (node_1, node_2) in way.nodes.iter().tuples() {
+                            for (node_1, node_2) in way.nodes.iter().tuple_windows() {
                                 arc_insert_counter += 1;
                                 let cost = rn.distance(node_1, node_2).unwrap() / speed;
                                 rn.graph.entry(*node_1)
