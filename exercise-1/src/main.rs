@@ -15,10 +15,6 @@ impl<'a> RoadNetwork {
     }
 
     fn read_from_osm_file<P: AsRef<Path>>(path: P) -> Result<RoadNetwork, std::io::Error> {
-        let mut way_counter = 0;
-        let mut road_way_counter = 0;
-        let mut arc_insert_counter = 0;
-        let mut arc_counter_by_way_lens = 0;
         let f = std::fs::File::open(path).unwrap();
         let mut pbf = osmpbfreader::OsmPbfReader::new(f);
         let mut rn = RoadNetwork::new();
@@ -29,14 +25,10 @@ impl<'a> RoadNetwork {
                     rn.nodes.insert(node.id, (node.lat(), node.lon()));
                 },
                 OsmObj::Way(way) => {
-                    way_counter += 1;
                     if let Some(v) = way.tags.into_inner().get("highway") {
                         if let Some(road_type) = RoadNetwork::classify_road(v) {
-                            road_way_counter += 1;
-                            arc_counter_by_way_lens += way.nodes.iter().len() - 1;
                             let speed = RoadNetwork::speed(road_type);
                             for (node_1, node_2) in way.nodes.iter().tuple_windows() {
-                                arc_insert_counter += 1;
                                 let cost = rn.distance(node_1, node_2).unwrap() / speed;
                                 rn.graph.entry(*node_1)
                                 .and_modify(|edge_list| {edge_list.insert(*node_2, cost);})
@@ -60,10 +52,6 @@ impl<'a> RoadNetwork {
                 _ => ()
             }
         });
-        println!("Number of ways: {}", way_counter);
-        println!("Arc insertions: {}", arc_insert_counter);
-        println!("Valid ways: {}", road_way_counter);
-        println!("Arc counter by way lens: {}", arc_counter_by_way_lens);
         Ok(rn)
     }
 
