@@ -126,11 +126,6 @@ enum RoadType {
     Service
 }
 
-fn main() {
-    let rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
-    println!("{rn}");
-}
-
 #[cfg(test)]
 mod tests {
     use crate::RoadNetwork;
