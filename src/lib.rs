@@ -5,7 +5,7 @@ use std::{collections::HashMap, path::Path};
 
 
 struct RoadNetwork {
-    graph: HashMap<NodeId, HashMap<NodeId, f64>>,
+    graph: HashMap<NodeId, HashMap<NodeId, u32>>,
     nodes: HashMap<NodeId, (f64, f64)>
 }
 
@@ -29,7 +29,7 @@ impl<'a> RoadNetwork {
                         if let Some(road_type) = RoadNetwork::classify_road(v) {
                             let speed = RoadNetwork::speed(road_type);
                             for (node_1, node_2) in way.nodes.iter().tuple_windows() {
-                                let cost = rn.distance(node_1, node_2).unwrap() / speed;
+                                let cost = (rn.distance(node_1, node_2).unwrap() / speed) as u32;
                                 rn.graph.entry(*node_1)
                                 .and_modify(|edge_list| {edge_list.insert(*node_2, cost);})
                                 .or_insert({
