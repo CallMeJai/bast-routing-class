@@ -1,7 +1,7 @@
 use osmpbfreader::{OsmObj, NodeId};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
-use std::{collections::HashMap, path::Path};
+use std::{collections::{HashMap, HashSet, BinaryHeap}, path::Path, cmp::Reverse}; 
 
 
 struct RoadNetwork {
@@ -124,6 +124,60 @@ enum RoadType {
     Unsurfaced,
     LivingStreet,
     Service
+}
+
+struct DijkstrasAlgorithm<'a> {
+    rn: &'a RoadNetwork,
+    visited_nodes: HashMap<NodeId, u32>,
+}
+
+impl DijkstrasAlgorithm<'_> {
+    fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
+        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new()}
+    }
+
+    // returns cost of shortest path to target if target exists.
+    // marks visited nodes with marker if marker exists.
+    fn compute_shortest_path(&mut self, source: NodeId, target: Option<NodeId>,
+        marker: Option<u32>) -> Option<u64> {
+        let mut settled_nodes = HashSet::new();
+        let mut pq = BinaryHeap::new(); // defaults to max-heap
+        let mut node_costs = HashMap::<NodeId, u64>::new();
+        pq.push((Reverse(0), source)); // reverse to create min-heap
+        node_costs.insert(source, 0);
+        if let Some(marker) = marker {
+            self.visited_nodes.insert(source, marker);
+        }
+        while let Some((Reverse(cost), closest_node)) = pq.pop() {
+            if settled_nodes.contains(&closest_node) {
+                continue; // no point going back over a settled node
+            }
+            settled_nodes.insert(closest_node);
+            if target.is_some_and(|target| closest_node == target) { // found target
+                return Some(cost as u64);
+            }
+            if let Some(edges) = self.rn.graph.get(&closest_node) {
+                for (dest, cost) in edges {
+                    if settled_nodes.contains(dest) {
+                        continue; // no point touching a settled node
+                    }
+                    // marking visited nodes
+                    if let Some(marker) = marker {
+                        self.visited_nodes.insert(*dest, marker);
+                    }
+                    let cost_from_closest = node_costs.get(&closest_node).unwrap() + *cost as u64;
+                    if let Some(current_best_cost) = node_costs.get(dest) {
+                        if current_best_cost <= &cost_from_closest {
+                            continue; // can't relax edge
+                        }
+                    }
+                    pq.push((Reverse(cost_from_closest), *dest));
+                    node_costs.insert(*dest, cost_from_closest);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
