@@ -9,7 +9,7 @@ struct RoadNetwork {
     nodes: HashMap<NodeId, (f64, f64)>
 }
 
-impl<'a> RoadNetwork {
+impl RoadNetwork {
     fn new() -> RoadNetwork {
         RoadNetwork{ graph: HashMap::new(), nodes: HashMap::new() }
     }
