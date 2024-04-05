@@ -98,6 +98,27 @@ impl RoadNetwork {
             RoadType::Service => 5_000.0 / 3600.0,
         }
     }
+
+    fn reduce_to_largest_connected_component(&mut self) {
+        let mut d = DijkstrasAlgorithm::new(self);
+        let mut source_nodes: HashSet<NodeId> = self.graph.keys().map(|x| x.clone()).collect();
+        while !source_nodes.is_empty() {
+            let source_node = source_nodes.iter().next().unwrap();
+            d.compute_shortest_path(*source_node, None, Some(source_node.0 as u64));
+            let v = d.visited_nodes.keys().map(|x| x.clone()).collect();
+            source_nodes = source_nodes.difference(&v).map(|x| *x).collect();
+        }
+        let mut node_hist = HashMap::new();
+        d.visited_nodes.values().for_each(|x| {node_hist.entry(x)
+            .and_modify(|count| {*count += 1;})
+            .or_insert(1);});
+        let lcc_node = NodeId(**node_hist.iter().max_by(|a, b| a.1.cmp(&b.1)).map(|(k, _v)| k).unwrap() as i64);
+        d.visited_nodes.clear();
+        d.compute_shortest_path(lcc_node, None, Some(lcc_node.0 as u64));
+        let visited = d.visited_nodes;
+        self.graph.retain(|k, _v| visited.contains_key(k));
+        self.nodes.retain(|k, _v| visited.contains_key(k));
+    }
 }
 
 impl std::fmt::Display for RoadNetwork {
@@ -127,7 +148,7 @@ enum RoadType {
 
 struct DijkstrasAlgorithm<'a> {
     rn: &'a RoadNetwork,
-    visited_nodes: HashMap<NodeId, u32>,
+    visited_nodes: HashMap<NodeId, u64>,
 }
 
 impl DijkstrasAlgorithm<'_> {
@@ -138,7 +159,7 @@ impl DijkstrasAlgorithm<'_> {
     // returns cost of shortest path to target if target exists.
     // marks visited nodes with marker if marker exists.
     fn compute_shortest_path(&mut self, source: NodeId, target: Option<NodeId>,
-        marker: Option<u32>) -> Option<u64> {
+        marker: Option<u64>) -> Option<u64> {
         let mut settled_nodes = HashSet::new();
         let mut pq = BinaryHeap::new(); // defaults to max-heap
         let mut node_costs = HashMap::<NodeId, u64>::new();
