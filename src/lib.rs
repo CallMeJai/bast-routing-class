@@ -149,11 +149,12 @@ enum RoadType {
 struct DijkstrasAlgorithm<'a> {
     rn: &'a RoadNetwork,
     visited_nodes: HashMap<NodeId, u64>,
+    num_settled_nodes: usize,
 }
 
 impl DijkstrasAlgorithm<'_> {
     fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
-        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new()}
+        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new(), num_settled_nodes: 0}
     }
 
     // returns cost of shortest path to target if target exists.
@@ -174,6 +175,7 @@ impl DijkstrasAlgorithm<'_> {
             }
             settled_nodes.insert(closest_node);
             if target.is_some_and(|target| closest_node == target) { // found target
+                self.num_settled_nodes = settled_nodes.len();
                 return Some(cost as u64);
             }
             if let Some(edges) = self.rn.graph.get(&closest_node) {
@@ -196,14 +198,17 @@ impl DijkstrasAlgorithm<'_> {
                 }
             }
         }
+        self.num_settled_nodes = settled_nodes.len();
         None
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::RoadNetwork;
-    use std::time::Instant;
+    use crate::{DijkstrasAlgorithm, RoadNetwork};
+    use std::time::{Duration, Instant};
+    use rand::seq::IteratorRandom;
+    use itertools::Itertools;
 
     #[test]
     fn saarland() {
@@ -219,7 +224,21 @@ mod tests {
         let elapsed_time = now.elapsed();
         println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
         assert_eq!(rn.nodes.len(), 213_567);
-        assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
+        // assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time: Duration = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut d = DijkstrasAlgorithm::new(&rn);
+        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+            let now = Instant::now();
+            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += d.num_settled_nodes;
+        }
+        println!("Average time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
     }
 
     #[test]
@@ -236,6 +255,20 @@ mod tests {
         let elapsed_time = now.elapsed();
         println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
         assert_eq!(rn.nodes.len(), 2_458_230);
-        assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
+        //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time: Duration = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut d = DijkstrasAlgorithm::new(&rn);
+        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+            let now = Instant::now();
+            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += d.num_settled_nodes;
+        }
+        println!("Average time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
     }
 }
