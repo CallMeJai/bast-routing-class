@@ -21,7 +21,6 @@ impl RoadNetwork {
         let _ = pbf.iter().map(Result::unwrap).for_each(|obj| {
             match obj {
                 OsmObj::Node(node) => {
-                    rn.graph.insert(node.id, HashMap::new());
                     rn.nodes.insert(node.id, (node.lat(), node.lon()));
                 },
                 OsmObj::Way(way) => {
