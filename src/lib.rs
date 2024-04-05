@@ -205,18 +205,24 @@ mod tests {
     use crate::RoadNetwork;
 
     #[test]
-    fn saarland_from_osm() {
-        let rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+    fn saarland() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 1_119_289);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 227_826);
+        rn.reduce_to_largest_connected_component();
+        assert_eq!(rn.nodes.len(), 213_567);
+        assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
     }
 
     #[test]
-    fn baden_wuerttemberg_from_osm() {
-        let rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+    fn baden_wuerttemberg() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 14_593_458);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_642_949);
+        rn.reduce_to_largest_connected_component();
+        assert_eq!(rn.nodes.len(), 2_458_230);
+        assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
     }
 }
