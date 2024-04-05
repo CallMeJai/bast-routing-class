@@ -203,25 +203,38 @@ impl DijkstrasAlgorithm<'_> {
 #[cfg(test)]
 mod tests {
     use crate::RoadNetwork;
+    use std::time::Instant;
 
     #[test]
     fn saarland() {
+        let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        let elapsed_time = now.elapsed();
+        println!("Reading OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 1_119_289);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 227_826);
+        let now = Instant::now();
         rn.reduce_to_largest_connected_component();
+        let elapsed_time = now.elapsed();
+        println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
         assert_eq!(rn.nodes.len(), 213_567);
         assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
     }
 
     #[test]
     fn baden_wuerttemberg() {
+        let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        let elapsed_time = now.elapsed();
+        println!("Reading OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 14_593_458);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_642_949);
+        let now = Instant::now();
         rn.reduce_to_largest_connected_component();
+        let elapsed_time = now.elapsed();
+        println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
         assert_eq!(rn.nodes.len(), 2_458_230);
         assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
     }
