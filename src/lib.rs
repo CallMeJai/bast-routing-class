@@ -223,6 +223,7 @@ mod tests {
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
         println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
+        println!("{rn}");
         assert_eq!(rn.nodes.len(), 213_567);
         // assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
         let mut rng = &mut rand::thread_rng();
@@ -254,6 +255,7 @@ mod tests {
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
         println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
+        println!("{rn}");
         assert_eq!(rn.nodes.len(), 2_458_230);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
         let mut rng = &mut rand::thread_rng();
