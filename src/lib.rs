@@ -107,6 +107,9 @@ impl RoadNetwork {
             d.compute_shortest_path(*source_node, None, Some(source_node.0 as u64));
             let v = d.visited_nodes.keys().map(|x| x.clone()).collect();
             source_nodes = source_nodes.difference(&v).map(|x| *x).collect();
+            if v.len() > source_nodes.len() {
+                break;
+            }
         }
         let mut node_hist = HashMap::new();
         d.visited_nodes.values().for_each(|x| {node_hist.entry(x)
