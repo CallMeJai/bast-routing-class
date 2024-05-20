@@ -1,4 +1,4 @@
-use osmpbfreader::{OsmObj, NodeId};
+use osmpbfreader::{Node, NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
 use std::{collections::{HashMap, HashSet, BinaryHeap}, path::Path, cmp::Reverse}; 
@@ -217,6 +217,16 @@ impl DijkstrasAlgorithm<'_> {
 
     fn set_heuristic(&mut self, h: HashMap<NodeId, u64>) {
         self.heuristic = Some(h);
+    }
+
+    fn simple_heuristic(self, target: NodeId) -> HashMap<NodeId, u64> {
+        let mut h = HashMap::new();
+        let g = Geodesic::wgs84();
+        let p0 = self.rn.nodes.get(&target).unwrap();
+        for (id, p1) in &self.rn.nodes {
+            h.insert(id, g.inverse(p0.0, p0.1, p1.0, p1.1) * 3600 / 110_000.0 as u64);
+        }
+        h
     }
 }
 
