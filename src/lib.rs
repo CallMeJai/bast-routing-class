@@ -219,12 +219,12 @@ impl DijkstrasAlgorithm<'_> {
         self.heuristic = Some(h);
     }
 
-    fn simple_heuristic(self, target: NodeId) -> HashMap<NodeId, u64> {
+    fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::new();
         let g = Geodesic::wgs84();
         let p0 = self.rn.nodes.get(&target).unwrap();
         for (id, p1) in &self.rn.nodes {
-            h.insert(id, g.inverse(p0.0, p0.1, p1.0, p1.1) * 3600 / 110_000.0 as u64);
+            h.insert(*id, (<Geodesic as InverseGeodesic<f64>>::inverse(&g, p0.0, p0.1, p1.0, p1.1) * 3600.0 / 110_000.0) as u64);
         }
         h
     }
