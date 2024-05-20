@@ -1,7 +1,7 @@
 use osmpbfreader::{Node, NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
-use std::{collections::{HashMap, HashSet, BinaryHeap}, path::Path, cmp::Reverse}; 
+use std::{cmp::Reverse, collections::{BinaryHeap, HashMap, HashSet}, path::Path}; 
 
 
 struct RoadNetwork {
@@ -28,7 +28,7 @@ impl RoadNetwork {
                         if let Some(road_type) = RoadNetwork::classify_road(v) {
                             let speed = RoadNetwork::speed(road_type);
                             for (node_1, node_2) in way.nodes.iter().tuple_windows() {
-                                let cost = (rn.distance(node_1, node_2).unwrap() / speed) as u32;
+                                let cost = (rn.approx_distance(node_1, node_2).unwrap() / speed) as u32;
                                 rn.graph.entry(*node_1)
                                 .and_modify(|edge_list| {edge_list.insert(*node_2, cost);})
                                 .or_insert({
@@ -85,6 +85,17 @@ impl RoadNetwork {
         }
     }
 
+    // approximate distance relevant to germany
+    fn approx_distance(&self, id_1: &NodeId, id_2: &NodeId) -> Option<f64> {
+        if let (Some(p_1), Some(p_2)) = (self.nodes.get(id_1), self.nodes.get(id_2)) {
+            let diff_lat = (p_1.0 - p_2.0) * 111_229.0;
+            let diff_lon = (p_1.1 - p_2.1) * 71_695.0;
+            Some(f64::sqrt(diff_lat * diff_lat + diff_lon * diff_lon))
+        } else {
+            None
+        }
+    }
+
     // speed in m/s
     fn speed(road_type: RoadType) -> f64 {
         match road_type {
@@ -121,6 +132,8 @@ impl RoadNetwork {
         let visited = d.visited_nodes;
         self.graph.retain(|k, _v| visited.contains_key(k));
         self.nodes.retain(|k, _v| visited.contains_key(k));
+        self.graph.shrink_to_fit();
+        self.nodes.shrink_to_fit();
     }
 }
 
@@ -221,10 +234,8 @@ impl DijkstrasAlgorithm<'_> {
 
     fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::new();
-        let g = Geodesic::wgs84();
-        let p0 = self.rn.nodes.get(&target).unwrap();
-        for (id, p1) in &self.rn.nodes {
-            h.insert(*id, (<Geodesic as InverseGeodesic<f64>>::inverse(&g, p0.0, p0.1, p1.0, p1.1) * 3600.0 / 110_000.0) as u64);
+        for (id, _) in &self.rn.nodes {
+            h.insert(*id, (self.rn.approx_distance(id, &target).unwrap() * 3600.0 / 110_000.0) as u64);
         }
         h
     }
