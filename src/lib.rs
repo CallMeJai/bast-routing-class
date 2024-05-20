@@ -153,11 +153,12 @@ struct DijkstrasAlgorithm<'a> {
     rn: &'a RoadNetwork,
     visited_nodes: HashMap<NodeId, u64>,
     num_settled_nodes: usize,
+    heuristic: Option<HashMap<NodeId, u64>>,
 }
 
 impl DijkstrasAlgorithm<'_> {
     fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
-        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new(), num_settled_nodes: 0}
+        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new(), num_settled_nodes: 0, heuristic: None}
     }
 
     // returns cost of shortest path to target if target exists.
@@ -167,7 +168,11 @@ impl DijkstrasAlgorithm<'_> {
         let mut settled_nodes = HashSet::new();
         let mut pq = BinaryHeap::new(); // defaults to max-heap
         let mut node_costs = HashMap::<NodeId, u64>::new();
-        pq.push((Reverse(0), source)); // reverse to create min-heap
+        let mut h = 0;
+        if self.heuristic.is_some() {
+            h = *self.heuristic.as_ref().unwrap().get(&source).unwrap();
+        }
+        pq.push((Reverse(h), source));
         node_costs.insert(source, 0);
         if let Some(marker) = marker {
             self.visited_nodes.insert(source, marker);
@@ -179,7 +184,7 @@ impl DijkstrasAlgorithm<'_> {
             settled_nodes.insert(closest_node);
             if target.is_some_and(|target| closest_node == target) { // found target
                 self.num_settled_nodes = settled_nodes.len();
-                return Some(cost as u64);
+                return Some(*node_costs.get(&closest_node).unwrap() as u64);
             }
             if let Some(edges) = self.rn.graph.get(&closest_node) {
                 for (dest, cost) in edges {
@@ -196,13 +201,22 @@ impl DijkstrasAlgorithm<'_> {
                             continue; // can't relax edge
                         }
                     }
-                    pq.push((Reverse(cost_from_closest), *dest));
+                    if self.heuristic.is_some() {
+                        h = *self.heuristic.as_ref().unwrap().get(dest).unwrap();
+                    } else {
+                        h = 0;
+                    }
+                    pq.push((Reverse(cost_from_closest + h), *dest));
                     node_costs.insert(*dest, cost_from_closest);
                 }
             }
         }
         self.num_settled_nodes = settled_nodes.len();
         None
+    }
+
+    fn set_heuristic(&mut self, h: HashMap<NodeId, u64>) {
+        self.heuristic = Some(h);
     }
 }
 
