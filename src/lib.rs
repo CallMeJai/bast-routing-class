@@ -296,6 +296,25 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
+        println!("---------- Dijkstra -----------");
+        println!("Average time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
+        total_elapsed_time = Duration::ZERO;
+        total_cost = 0;
+        total_settled_nodes = 0;
+        let mut total_heuristic_calc_time = Duration::ZERO;
+        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+            let now = Instant::now();
+            d.set_heuristic(d.simple_heuristic(***dst));
+            total_heuristic_calc_time += now.elapsed();
+            let now = Instant::now();
+            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += d.num_settled_nodes;
+        }
+        println!("----------  A-star  -----------");
+        println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
