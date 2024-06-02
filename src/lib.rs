@@ -254,14 +254,14 @@ mod tests {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
         let elapsed_time = now.elapsed();
-        println!("Reading OSM took {} s", elapsed_time.as_secs_f32());
+        println!("Reading Saarland OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 1_119_289);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 227_826);
         let now = Instant::now();
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
-        println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
+        println!("Saarland LCC reduction took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 213_567);
         // assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
@@ -276,7 +276,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("---------- Dijkstra -----------");
+        println!("---------- Dijkstra (S) -----------");
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
@@ -293,7 +293,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("----------  A-star  -----------");
+        println!("----------  A-star (S) -----------");
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
@@ -317,7 +317,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("------  A-star Landmark  -------");
+        println!("------  A-star Landmark (S) -------");
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
@@ -330,14 +330,14 @@ mod tests {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
         let elapsed_time = now.elapsed();
-        println!("Reading OSM took {} s", elapsed_time.as_secs_f32());
+        println!("Reading BW OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 14_593_458);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_642_949);
         let now = Instant::now();
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
-        println!("LCC reduction took {} s", elapsed_time.as_secs_f32());
+        println!("BW LCC reduction took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 2_458_230);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
@@ -352,7 +352,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("---------- Dijkstra -----------");
+        println!("---------- Dijkstra (BW) -----------");
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
@@ -369,7 +369,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("----------  A-star  -----------");
+        println!("----------  A-star (BW) -----------");
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
@@ -393,7 +393,7 @@ mod tests {
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
-        println!("------  A-star Landmark  -------");
+        println!("------  A-star Landmark (BW) -------");
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
