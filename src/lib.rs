@@ -19,7 +19,7 @@ impl RoadNetwork {
         let f = std::fs::File::open(path).unwrap();
         let mut pbf = osmpbfreader::OsmPbfReader::new(f);
         let mut rn = RoadNetwork::new();
-        let _ = pbf.iter().map(Result::unwrap).for_each(|obj| {
+        pbf.iter().map(Result::unwrap).for_each(|obj| {
             match obj {
                 OsmObj::Node(node) => {
                     rn.nodes.insert(node.id, (node.lat(), node.lon()));
@@ -113,12 +113,12 @@ impl RoadNetwork {
 
     pub fn reduce_to_largest_connected_component(&mut self) {
         let mut d = DijkstrasAlgorithm::new(self);
-        let mut source_nodes: HashSet<NodeId> = self.graph.keys().map(|x| x.clone()).collect();
+        let mut source_nodes: HashSet<NodeId> = self.graph.keys().copied().collect();
         while !source_nodes.is_empty() {
             let source_node = source_nodes.iter().next().unwrap();
             d.compute_shortest_path(*source_node, None, Some(source_node.0 as u64));
-            let v = d.visited_nodes.keys().map(|x| x.clone()).collect();
-            source_nodes = source_nodes.difference(&v).map(|x| *x).collect();
+            let v = d.visited_nodes.keys().copied().collect();
+            source_nodes = source_nodes.difference(&v).copied().collect();
             if v.len() > source_nodes.len() {
                 break;
             }
@@ -127,7 +127,7 @@ impl RoadNetwork {
         d.visited_nodes.values().for_each(|x| {node_hist.entry(x)
             .and_modify(|count| {*count += 1;})
             .or_insert(1);});
-        let lcc_node = NodeId(**node_hist.iter().max_by(|a, b| a.1.cmp(&b.1)).map(|(k, _v)| k).unwrap() as i64);
+        let lcc_node = NodeId(**node_hist.iter().max_by(|a, b| a.1.cmp(b.1)).map(|(k, _v)| k).unwrap() as i64);
         d.visited_nodes.clear();
         d.compute_shortest_path(lcc_node, None, Some(lcc_node.0 as u64));
         let visited = d.visited_nodes;
@@ -141,7 +141,7 @@ impl RoadNetwork {
 impl std::fmt::Display for RoadNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "# of Nodes: {}, # of Arcs: {}", self.nodes.len(), 
-            self.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2)
+            self.graph.values().map(|v| v.len()).sum::<usize>() / 2)
     }
 }
 
@@ -198,7 +198,7 @@ impl DijkstrasAlgorithm<'_> {
             settled_nodes.insert(closest_node);
             if target.is_some_and(|target| closest_node == target) { // found target
                 self.num_settled_nodes = settled_nodes.len();
-                return Some(*node_costs.get(&closest_node).unwrap() as u64);
+                return Some(*node_costs.get(&closest_node).unwrap());
             }
             if let Some(edges) = self.rn.graph.get(&closest_node) {
                 for (dest, cost) in edges {
@@ -235,7 +235,7 @@ impl DijkstrasAlgorithm<'_> {
 
     pub fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::new();
-        for (id, _) in &self.rn.nodes {
+        for id in self.rn.nodes.keys() {
             h.insert(*id, (self.rn.approx_distance(id, &target).unwrap() * 3600.0 / 110_000.0) as u64);
         }
         h
@@ -250,9 +250,9 @@ pub struct LandmarkAlgorithm<'a> {
 }
 
 impl LandmarkAlgorithm<'_> {
-    pub fn new<'a>(rn: &'a RoadNetwork) -> LandmarkAlgorithm<'a> {
+    pub fn new(rn: &RoadNetwork) -> LandmarkAlgorithm<'_> {
         LandmarkAlgorithm {
-            rn: rn,
+            rn,
             landmarks: Vec::new(),
             costs: HashMap::new(),
             rng: rand::thread_rng(),
@@ -261,7 +261,7 @@ impl LandmarkAlgorithm<'_> {
 
     pub fn select_landmarks(&mut self, n: usize) {
         self.landmarks.clear();
-        self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| (*x).clone()).collect();
+        self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| *(*x)).collect();
     }
 
     // simplified and slightly modified to give all distances from a single source
