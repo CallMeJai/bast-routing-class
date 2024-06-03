@@ -191,7 +191,7 @@ impl DijkstrasAlgorithm<'_> {
         if let Some(marker) = marker {
             self.visited_nodes.insert(source, marker);
         }
-        while let Some((Reverse(cost), closest_node)) = pq.pop() {
+        while let Some((_, closest_node)) = pq.pop() {
             if settled_nodes.contains(&closest_node) {
                 continue; // no point going back over a settled node
             }
@@ -271,7 +271,7 @@ impl LandmarkAlgorithm<'_> {
         let mut node_costs = HashMap::<NodeId, u64>::new();
         pq.push((Reverse(0), source));
         node_costs.insert(source, 0);
-        while let Some((Reverse(cost), closest_node)) = pq.pop() {
+        while let Some((_, closest_node)) = pq.pop() {
             if settled_nodes.contains(&closest_node) {
                 continue; // no point going back over a settled node
             }
