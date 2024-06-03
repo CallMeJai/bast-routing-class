@@ -308,9 +308,10 @@ impl LandmarkAlgorithm<'_> {
     }
 
     pub fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
-        let mut h = HashMap::<NodeId, u64>::new(); 
+        let mut h = HashMap::<NodeId, u64>::new();
+        let l_t_dists: &Vec<u64> = self.costs.get(&target).unwrap();
         for (node, _) in self.rn.nodes.iter() {
-            h.insert(*node, *self.costs.get(node).unwrap().iter().max().unwrap());
+            h.insert(*node, self.costs.get(node).unwrap().iter().zip(l_t_dists.iter()).map(|(x, y)| x.abs_diff(*y)).max().unwrap());
         }
         h
     }
