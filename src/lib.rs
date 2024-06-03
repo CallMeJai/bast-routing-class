@@ -242,6 +242,80 @@ impl DijkstrasAlgorithm<'_> {
     }
 }
 
+struct LandmarkAlgorithm<'a> {
+    rn: &'a RoadNetwork,
+    landmarks: Vec<NodeId>,
+    costs: HashMap<NodeId, Vec<u64>>,
+    rng: ThreadRng,
+}
+
+impl LandmarkAlgorithm<'_> {
+    fn new<'a>(rn: &'a RoadNetwork) -> LandmarkAlgorithm<'a> {
+        LandmarkAlgorithm {
+            rn: rn,
+            landmarks: Vec::new(),
+            costs: HashMap::new(),
+            rng: rand::thread_rng(),
+        }
+    }
+
+    fn select_landmarks(&mut self, n: usize) {
+        self.landmarks.clear();
+        self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| (*x).clone()).collect();
+    }
+
+    // simplified and slightly modified to give all distances from a single source
+    fn dijkstra(&self, source: NodeId) -> HashMap<NodeId, u64> {
+        let mut settled_nodes = HashSet::new();
+        let mut pq: BinaryHeap<(Reverse<u64>, NodeId)> = BinaryHeap::new(); // defaults to max-heap
+        let mut node_costs = HashMap::<NodeId, u64>::new();
+        pq.push((Reverse(0), source));
+        node_costs.insert(source, 0);
+        while let Some((Reverse(cost), closest_node)) = pq.pop() {
+            if settled_nodes.contains(&closest_node) {
+                continue; // no point going back over a settled node
+            }
+            settled_nodes.insert(closest_node);
+            if let Some(edges) = self.rn.graph.get(&closest_node) {
+                for (dest, cost) in edges {
+                    if settled_nodes.contains(dest) {
+                        continue; // no point touching a settled node
+                    }
+                    let cost_from_closest = node_costs.get(&closest_node).unwrap() + *cost as u64;
+                    if let Some(current_best_cost) = node_costs.get(dest) {
+                        if current_best_cost <= &cost_from_closest {
+                            continue; // can't relax edge
+                        }
+                    }
+                    pq.push((Reverse(cost_from_closest), *dest));
+                    node_costs.insert(*dest, cost_from_closest);
+                }
+            }
+        }
+        node_costs
+    }
+
+    fn precompute_landmark_distances(&mut self) {
+        self.costs.clear();
+        for l in self.landmarks.iter() {
+            for (n, cost) in self.dijkstra(*l) {
+                self.costs.entry(n)
+                .and_modify(|x| {x.push(cost)})
+                .or_insert(vec![cost]);
+            }
+            
+        }
+    }
+
+    fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
+        let mut h = HashMap::<NodeId, u64>::new(); 
+        for (node, _) in self.rn.nodes.iter() {
+            h.insert(*node, *self.costs.get(node).unwrap().iter().max().unwrap());
+        }
+        h
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork};
