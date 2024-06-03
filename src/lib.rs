@@ -1,11 +1,11 @@
-use osmpbfreader::{Node, NodeId, OsmObj};
+use osmpbfreader::{NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
 use std::{cmp::Reverse, collections::{BinaryHeap, HashMap, HashSet}, path::Path};
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 
 
-struct RoadNetwork {
+pub struct RoadNetwork {
     graph: HashMap<NodeId, HashMap<NodeId, u32>>,
     nodes: HashMap<NodeId, (f64, f64)>
 }
@@ -15,7 +15,7 @@ impl RoadNetwork {
         RoadNetwork{ graph: HashMap::new(), nodes: HashMap::new() }
     }
 
-    fn read_from_osm_file<P: AsRef<Path>>(path: P) -> Result<RoadNetwork, std::io::Error> {
+    pub fn read_from_osm_file<P: AsRef<Path>>(path: P) -> Result<RoadNetwork, std::io::Error> {
         let f = std::fs::File::open(path).unwrap();
         let mut pbf = osmpbfreader::OsmPbfReader::new(f);
         let mut rn = RoadNetwork::new();
@@ -77,7 +77,7 @@ impl RoadNetwork {
     }
 
     // distance in m
-    fn distance(&self, id_1: &NodeId, id_2: &NodeId) -> Option<f64> {
+    pub fn distance(&self, id_1: &NodeId, id_2: &NodeId) -> Option<f64> {
         let g = Geodesic::wgs84();
         if let (Some(p_1), Some(p_2)) = (self.nodes.get(id_1), self.nodes.get(id_2)) {
             Some(g.inverse(p_1.0, p_1.1, p_2.0, p_2.1))
@@ -111,7 +111,7 @@ impl RoadNetwork {
         }
     }
 
-    fn reduce_to_largest_connected_component(&mut self) {
+    pub fn reduce_to_largest_connected_component(&mut self) {
         let mut d = DijkstrasAlgorithm::new(self);
         let mut source_nodes: HashSet<NodeId> = self.graph.keys().map(|x| x.clone()).collect();
         while !source_nodes.is_empty() {
@@ -163,7 +163,7 @@ enum RoadType {
     Service
 }
 
-struct DijkstrasAlgorithm<'a> {
+pub struct DijkstrasAlgorithm<'a> {
     rn: &'a RoadNetwork,
     visited_nodes: HashMap<NodeId, u64>,
     num_settled_nodes: usize,
@@ -171,13 +171,13 @@ struct DijkstrasAlgorithm<'a> {
 }
 
 impl DijkstrasAlgorithm<'_> {
-    fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
+    pub fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
         DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new(), num_settled_nodes: 0, heuristic: None}
     }
 
     // returns cost of shortest path to target if target exists.
     // marks visited nodes with marker if marker exists.
-    fn compute_shortest_path(&mut self, source: NodeId, target: Option<NodeId>,
+    pub fn compute_shortest_path(&mut self, source: NodeId, target: Option<NodeId>,
         marker: Option<u64>) -> Option<u64> {
         let mut settled_nodes = HashSet::new();
         let mut pq = BinaryHeap::new(); // defaults to max-heap
@@ -229,11 +229,11 @@ impl DijkstrasAlgorithm<'_> {
         None
     }
 
-    fn set_heuristic(&mut self, h: HashMap<NodeId, u64>) {
+    pub fn set_heuristic(&mut self, h: HashMap<NodeId, u64>) {
         self.heuristic = Some(h);
     }
 
-    fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
+    pub fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::new();
         for (id, _) in &self.rn.nodes {
             h.insert(*id, (self.rn.approx_distance(id, &target).unwrap() * 3600.0 / 110_000.0) as u64);
@@ -242,7 +242,7 @@ impl DijkstrasAlgorithm<'_> {
     }
 }
 
-struct LandmarkAlgorithm<'a> {
+pub struct LandmarkAlgorithm<'a> {
     rn: &'a RoadNetwork,
     landmarks: Vec<NodeId>,
     costs: HashMap<NodeId, Vec<u64>>,
@@ -250,7 +250,7 @@ struct LandmarkAlgorithm<'a> {
 }
 
 impl LandmarkAlgorithm<'_> {
-    fn new<'a>(rn: &'a RoadNetwork) -> LandmarkAlgorithm<'a> {
+    pub fn new<'a>(rn: &'a RoadNetwork) -> LandmarkAlgorithm<'a> {
         LandmarkAlgorithm {
             rn: rn,
             landmarks: Vec::new(),
@@ -259,7 +259,7 @@ impl LandmarkAlgorithm<'_> {
         }
     }
 
-    fn select_landmarks(&mut self, n: usize) {
+    pub fn select_landmarks(&mut self, n: usize) {
         self.landmarks.clear();
         self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| (*x).clone()).collect();
     }
@@ -295,7 +295,7 @@ impl LandmarkAlgorithm<'_> {
         node_costs
     }
 
-    fn precompute_landmark_distances(&mut self) {
+    pub fn precompute_landmark_distances(&mut self) {
         self.costs.clear();
         for l in self.landmarks.iter() {
             for (n, cost) in self.dijkstra(*l) {
@@ -307,7 +307,7 @@ impl LandmarkAlgorithm<'_> {
         }
     }
 
-    fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
+    pub fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::<NodeId, u64>::new(); 
         for (node, _) in self.rn.nodes.iter() {
             h.insert(*node, *self.costs.get(node).unwrap().iter().max().unwrap());
