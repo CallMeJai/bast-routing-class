@@ -245,16 +245,22 @@ impl DijkstrasAlgorithm<'_> {
 pub struct LandmarkAlgorithm<'a> {
     rn: &'a RoadNetwork,
     landmarks: Vec<NodeId>,
-    costs: HashMap<NodeId, Vec<u64>>,
+    index_map: HashMap<NodeId, usize>,
+    costs: Vec<(NodeId, Vec<u64>)>,
     rng: ThreadRng,
 }
 
 impl LandmarkAlgorithm<'_> {
     pub fn new(rn: &RoadNetwork) -> LandmarkAlgorithm<'_> {
+        let mut index_map = HashMap::new();
+        for (i, node) in rn.nodes.keys().enumerate() {
+            index_map.insert(*node, i);
+        }
         LandmarkAlgorithm {
             rn,
             landmarks: Vec::new(),
-            costs: HashMap::new(),
+            index_map,
+            costs: Vec::new(),
             rng: rand::thread_rng(),
         }
     }
@@ -264,8 +270,8 @@ impl LandmarkAlgorithm<'_> {
         self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| *(*x)).collect();
     }
 
-    // simplified and slightly modified to give all distances from a single source
-    fn dijkstra(&self, source: NodeId) -> HashMap<NodeId, u64> {
+    // simplified and modified to give all distances from a single source as a vec
+    fn dijkstra(&self, source: NodeId) -> Vec<u64> {
         let mut settled_nodes = HashSet::new();
         let mut pq: BinaryHeap<(Reverse<u64>, NodeId)> = BinaryHeap::new(); // defaults to max-heap
         let mut node_costs = HashMap::<NodeId, u64>::new();
@@ -292,26 +298,31 @@ impl LandmarkAlgorithm<'_> {
                 }
             }
         }
-        node_costs
+        let mut dists = vec![0; self.rn.nodes.len()];
+        for (n, cost) in node_costs {
+            dists[*self.index_map.get(&n).unwrap()] = cost;
+        }
+        dists
     }
 
     pub fn precompute_landmark_distances(&mut self) {
         self.costs.clear();
+        self.costs.resize(self.rn.nodes.len(), (osmpbfreader::NodeId(0), Vec::new()));
+        for (n, i) in self.index_map.iter() {
+            self.costs[*i].0 = *n;
+        }
         for l in self.landmarks.iter() {
-            for (n, cost) in self.dijkstra(*l) {
-                self.costs.entry(n)
-                .and_modify(|x| {x.push(cost)})
-                .or_insert(vec![cost]);
+            for (i, cost) in self.dijkstra(*l).iter().enumerate() {
+                self.costs[i].1.push(*cost);
             }
-            
         }
     }
 
     pub fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
         let mut h = HashMap::<NodeId, u64>::new();
-        let l_t_dists: &Vec<u64> = self.costs.get(&target).unwrap();
-        for (node, _) in self.rn.nodes.iter() {
-            h.insert(*node, self.costs.get(node).unwrap().iter().zip(l_t_dists.iter()).map(|(x, y)| x.abs_diff(*y)).max().unwrap());
+        let l_t_dists: &Vec<u64> = &self.costs[*self.index_map.get(&target).unwrap()].1;
+        for (node, dists) in self.costs.iter() {
+            h.insert(*node, dists.iter().zip(l_t_dists.iter()).map(|(x, y)| x.abs_diff(*y)).max().unwrap());
         }
         h
     }
