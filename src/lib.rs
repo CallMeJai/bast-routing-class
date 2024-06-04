@@ -336,7 +336,7 @@ mod tests {
     use itertools::Itertools;
 
     #[test]
-    fn saarland() {
+    fn saarland_osm() {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
         let elapsed_time = now.elapsed();
@@ -351,6 +351,12 @@ mod tests {
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 213_567);
         // assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
+    }
+
+    #[test]
+    fn saarland_dijkstra() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
         let mut rng = &mut rand::thread_rng();
         let mut total_elapsed_time: Duration = Duration::ZERO;
         let mut total_cost = 0;
@@ -366,10 +372,18 @@ mod tests {
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
-        total_elapsed_time = Duration::ZERO;
-        total_cost = 0;
-        total_settled_nodes = 0;
+    }
+
+    #[test]
+    fn saarland_a_star() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
+        let mut d = DijkstrasAlgorithm::new(&rn);
         for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
             d.set_heuristic(d.simple_heuristic(***dst));
@@ -384,14 +398,25 @@ mod tests {
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
-        total_elapsed_time = Duration::ZERO;
-        total_cost = 0;
-        total_settled_nodes = 0;
-        total_heuristic_calc_time = Duration::ZERO;
+    }
+
+    #[test]
+    fn saarland_a_star_landmarks() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut total_heuristic_calc_time = Duration::ZERO;
         let mut landmarks_precompute_time = Duration::ZERO;
+        let mut index_map_creation_time = Duration::ZERO;
+        let mut d = DijkstrasAlgorithm::new(&rn);
         let now = Instant::now();
         let mut l = LandmarkAlgorithm::new(&rn);
+        index_map_creation_time += now.elapsed();
         l.select_landmarks(42);
+        let now = Instant::now();
         l.precompute_landmark_distances();
         landmarks_precompute_time += now.elapsed();
         for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
@@ -404,6 +429,7 @@ mod tests {
             total_settled_nodes += d.num_settled_nodes;
         }
         println!("------  A-star Landmark (S) -------");
+        println!("Index map creation time: {} s", index_map_creation_time.as_secs_f32());
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
@@ -412,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn baden_wuerttemberg() {
+    fn baden_wuerttemberg_osm() {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
         let elapsed_time = now.elapsed();
@@ -427,6 +453,12 @@ mod tests {
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 2_458_230);
         //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
+    }
+
+    #[test]
+    fn baden_wuerttemberg_dijkstra() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
         let mut rng = &mut rand::thread_rng();
         let mut total_elapsed_time: Duration = Duration::ZERO;
         let mut total_cost = 0;
@@ -442,10 +474,18 @@ mod tests {
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
-        total_elapsed_time = Duration::ZERO;
-        total_cost = 0;
-        total_settled_nodes = 0;
+    }
+
+    #[test]
+    fn baden_wuerttemberg_a_star() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
+        let mut d = DijkstrasAlgorithm::new(&rn);
         for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
             d.set_heuristic(d.simple_heuristic(***dst));
@@ -460,14 +500,25 @@ mod tests {
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
-        total_elapsed_time = Duration::ZERO;
-        total_cost = 0;
-        total_settled_nodes = 0;
-        total_heuristic_calc_time = Duration::ZERO;
+    }
+
+    #[test]
+    fn baden_wuerttemberg_a_star_landmarks() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut total_heuristic_calc_time = Duration::ZERO;
         let mut landmarks_precompute_time = Duration::ZERO;
+        let mut index_map_creation_time = Duration::ZERO;
+        let mut d = DijkstrasAlgorithm::new(&rn);
         let now = Instant::now();
         let mut l = LandmarkAlgorithm::new(&rn);
+        index_map_creation_time += now.elapsed();
         l.select_landmarks(42);
+        let now = Instant::now();
         l.precompute_landmark_distances();
         landmarks_precompute_time += now.elapsed();
         for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
@@ -480,6 +531,7 @@ mod tests {
             total_settled_nodes += d.num_settled_nodes;
         }
         println!("------  A-star Landmark (BW) -------");
+        println!("Index map creation time: {} s", index_map_creation_time.as_secs_f32());
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
