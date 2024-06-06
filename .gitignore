@@ -1,3 +1,4 @@
 target/
 rsrc/
 code design suggestions/
+*.log
