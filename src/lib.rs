@@ -1,50 +1,47 @@
 use osmpbfreader::{NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
-use std::{cmp::Reverse, collections::{BinaryHeap, HashMap, HashSet}, path::Path};
+use std::{cmp::Reverse, collections::{BinaryHeap, HashMap}, path::Path};
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 
 
 pub struct RoadNetwork {
-    graph: HashMap<NodeId, HashMap<NodeId, u32>>,
-    nodes: HashMap<NodeId, (f64, f64)>
+    index_map: HashMap<NodeId, usize>,
+    graph: Vec<Vec<(usize, u32)>>,
+    nodes: Vec<(NodeId, (f64, f64))>
 }
 
 impl RoadNetwork {
     fn new() -> RoadNetwork {
-        RoadNetwork{ graph: HashMap::new(), nodes: HashMap::new() }
+        RoadNetwork {
+            index_map: HashMap::new(), 
+            graph: Vec::new(), 
+            nodes: Vec::new()
+        }
     }
 
     pub fn read_from_osm_file<P: AsRef<Path>>(path: P) -> Result<RoadNetwork, std::io::Error> {
         let f = std::fs::File::open(path).unwrap();
         let mut pbf = osmpbfreader::OsmPbfReader::new(f);
         let mut rn = RoadNetwork::new();
+        // assumes well-formed OSM file where all nodes come before all ways
         pbf.iter().map(Result::unwrap).for_each(|obj| {
             match obj {
                 OsmObj::Node(node) => {
-                    rn.nodes.insert(node.id, (node.lat(), node.lon()));
+                    rn.index_map.insert(node.id, rn.nodes.len());
+                    rn.nodes.push((node.id, (node.lat(), node.lon())));
+                    rn.graph.push(Vec::new());
                 },
                 OsmObj::Way(way) => {
                     if let Some(v) = way.tags.into_inner().get("highway") {
                         if let Some(road_type) = RoadNetwork::classify_road(v) {
                             let speed = RoadNetwork::speed(road_type);
                             for (node_1, node_2) in way.nodes.iter().tuple_windows() {
-                                let cost = (rn.approx_distance(node_1, node_2).unwrap() / speed) as u32;
-                                rn.graph.entry(*node_1)
-                                .and_modify(|edge_list| {edge_list.insert(*node_2, cost);})
-                                .or_insert({
-                                    let mut hm = HashMap::new();
-                                    hm.insert(*node_2, cost);
-                                    hm
-                                });
-                                rn.graph
-                                .entry(*node_2)
-                                .and_modify(|edge_list| {edge_list.insert(*node_1, cost);})
-                                .or_insert({
-                                    let mut hm = HashMap::new();
-                                    hm.insert(*node_1, cost);
-                                    hm
-                                });
+                                let n_1_i = *rn.index_map.get(node_1).unwrap();
+                                let n_2_i = *rn.index_map.get(node_2).unwrap();
+                                let cost = (rn.approx_distance(n_1_i, n_2_i) / speed) as u32;
+                                rn.graph[n_1_i].push((n_2_i, cost));
+                                rn.graph[n_2_i].push((n_1_i, cost));
                             }
                         }
                     } 
@@ -77,24 +74,18 @@ impl RoadNetwork {
     }
 
     // distance in m
-    pub fn distance(&self, id_1: &NodeId, id_2: &NodeId) -> Option<f64> {
+    pub fn distance(&self, id_1: usize, id_2: usize) -> f64 {
         let g = Geodesic::wgs84();
-        if let (Some(p_1), Some(p_2)) = (self.nodes.get(id_1), self.nodes.get(id_2)) {
-            Some(g.inverse(p_1.0, p_1.1, p_2.0, p_2.1))
-        } else {
-            None
-        }
+        let ((_, p_1), (_, p_2)) = (self.nodes[id_1], self.nodes[id_2]);
+        g.inverse(p_1.0, p_1.1, p_2.0, p_2.1)
     }
 
     // approximate distance relevant to germany
-    fn approx_distance(&self, id_1: &NodeId, id_2: &NodeId) -> Option<f64> {
-        if let (Some(p_1), Some(p_2)) = (self.nodes.get(id_1), self.nodes.get(id_2)) {
-            let diff_lat = (p_1.0 - p_2.0) * 111_229.0;
-            let diff_lon = (p_1.1 - p_2.1) * 71_695.0;
-            Some(f64::sqrt(diff_lat * diff_lat + diff_lon * diff_lon))
-        } else {
-            None
-        }
+    fn approx_distance(&self, id_1: usize, id_2: usize) -> f64 {
+        let ((_, p_1), (_, p_2)) = (self.nodes[id_1], self.nodes[id_2]);
+        let diff_lat = (p_1.0 - p_2.0) * 111_229.0;
+        let diff_lon = (p_1.1 - p_2.1) * 71_695.0;
+        f64::sqrt(diff_lat * diff_lat + diff_lon * diff_lon)
     }
 
     // speed in m/s
@@ -113,35 +104,48 @@ impl RoadNetwork {
 
     pub fn reduce_to_largest_connected_component(&mut self) {
         let mut d = DijkstrasAlgorithm::new(self);
-        let mut source_nodes: HashSet<NodeId> = self.graph.keys().copied().collect();
-        while !source_nodes.is_empty() {
-            let source_node = source_nodes.iter().next().unwrap();
-            d.compute_shortest_path(*source_node, None, Some(source_node.0 as u64));
-            let v = d.visited_nodes.keys().copied().collect();
-            source_nodes = source_nodes.difference(&v).copied().collect();
-            if v.len() > source_nodes.len() {
+        let mut num_nodes_left = self.nodes.len();
+        let num_edges = self.graph.iter().map(|v| v.len()).sum::<usize>() / 2;
+        for source_node in 0..self.nodes.len() {
+            if d.visited_nodes[source_node] != usize::MAX {
+                continue;
+            }
+            d.compute_shortest_path(source_node, None, Some(source_node));
+            num_nodes_left -= d.num_settled_nodes;
+            if d.num_settled_nodes > num_nodes_left || d.num_settled_nodes > num_edges / 2 {
                 break;
             }
         }
-        let mut node_hist = HashMap::new();
-        d.visited_nodes.values().for_each(|x| {node_hist.entry(x)
-            .and_modify(|count| {*count += 1;})
-            .or_insert(1);});
-        let lcc_node = NodeId(**node_hist.iter().max_by(|a, b| a.1.cmp(b.1)).map(|(k, _v)| k).unwrap() as i64);
-        d.visited_nodes.clear();
-        d.compute_shortest_path(lcc_node, None, Some(lcc_node.0 as u64));
-        let visited = d.visited_nodes;
-        self.graph.retain(|k, _v| visited.contains_key(k));
-        self.nodes.retain(|k, _v| visited.contains_key(k));
-        self.graph.shrink_to_fit();
-        self.nodes.shrink_to_fit();
+        let (&lcc_node, _) = d.visited_nodes.iter().filter(|&&marker| marker != usize::MAX)
+            .counts().into_iter().max_by_key(|&(_, count)| count).unwrap();
+        let index_map = d.visited_nodes.iter().enumerate()
+            .filter(|(_i, &n)| n == lcc_node).enumerate()
+            .map(|(new_idx, (old_idx, _lcc_node))| (self.nodes[old_idx].0, new_idx)).collect();
+        let old_to_new_index_map: HashMap<usize, usize> = d.visited_nodes.iter().enumerate()
+            .filter(|(_i, &n)| n == lcc_node).enumerate()
+            .map(|(new_idx, (old_idx, _lcc_node))| (old_idx, new_idx)).collect();
+        let mut nodes = vec![(NodeId(0), (0.0, 0.0)); old_to_new_index_map.len()];
+        for (i, val) in self.nodes.iter().enumerate() {
+            if let Some(&idx) = old_to_new_index_map.get(&i) {
+                nodes[idx] = *val;
+            }
+        }
+        let mut graph: Vec<Vec<(usize, u32)>> = vec![Vec::new(); nodes.len()];
+        for (i, val) in self.graph.iter().enumerate() {
+            if let Some(&idx) = old_to_new_index_map.get(&i) {
+                graph[idx] = val.iter().map(|(i, cost)| (*old_to_new_index_map.get(i).unwrap(), *cost)).collect();
+            }
+        }
+        self.index_map = index_map;
+        self.graph = graph;
+        self.nodes = nodes;
     }
 }
 
 impl std::fmt::Display for RoadNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "# of Nodes: {}, # of Arcs: {}", self.nodes.len(), 
-            self.graph.values().map(|v| v.len()).sum::<usize>() / 2)
+            self.graph.iter().map(|v| v.len()).sum::<usize>() / 2)
     }
 }
 
@@ -165,164 +169,139 @@ enum RoadType {
 
 pub struct DijkstrasAlgorithm<'a> {
     rn: &'a RoadNetwork,
-    visited_nodes: HashMap<NodeId, u64>,
+    visited_nodes: Vec<usize>,
     num_settled_nodes: usize,
-    heuristic: Option<HashMap<NodeId, u64>>,
+    heuristic: Vec<u64>,
 }
 
 impl DijkstrasAlgorithm<'_> {
     pub fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
-        DijkstrasAlgorithm{ rn, visited_nodes : HashMap::new(), num_settled_nodes: 0, heuristic: None}
+        DijkstrasAlgorithm{ rn, visited_nodes : vec![usize::MAX; rn.nodes.len()], num_settled_nodes: 0, heuristic: vec![0; rn.nodes.len()]}
     }
 
     // returns cost of shortest path to target if target exists.
     // marks visited nodes with marker if marker exists.
-    pub fn compute_shortest_path(&mut self, source: NodeId, target: Option<NodeId>,
-        marker: Option<u64>) -> Option<u64> {
-        let mut settled_nodes = HashSet::new();
+    pub fn compute_shortest_path(&mut self, source: usize, target: Option<usize>,
+        marker: Option<usize>) -> Option<u64> {
+        let mut settled_nodes = vec![false; self.rn.nodes.len()];
         let mut pq = BinaryHeap::new(); // defaults to max-heap
-        let mut node_costs = HashMap::<NodeId, u64>::new();
-        let mut h = 0;
-        if self.heuristic.is_some() {
-            h = *self.heuristic.as_ref().unwrap().get(&source).unwrap();
-        }
+        let mut node_costs: Vec<u64> = vec![u64::MAX; self.rn.nodes.len()];
+        let mut h = self.heuristic[source];
         pq.push((Reverse(h), source));
-        node_costs.insert(source, 0);
+        node_costs[source] = 0;
         if let Some(marker) = marker {
-            self.visited_nodes.insert(source, marker);
+            self.visited_nodes[source] = marker;
         }
         while let Some((_, closest_node)) = pq.pop() {
-            if settled_nodes.contains(&closest_node) {
+            if settled_nodes[closest_node] {
                 continue; // no point going back over a settled node
             }
-            settled_nodes.insert(closest_node);
+            settled_nodes[closest_node] = true;
             if target.is_some_and(|target| closest_node == target) { // found target
-                self.num_settled_nodes = settled_nodes.len();
-                return Some(*node_costs.get(&closest_node).unwrap());
+                self.num_settled_nodes = settled_nodes.iter().filter(|&x| *x).count();
+                return Some(node_costs[closest_node]);
             }
-            if let Some(edges) = self.rn.graph.get(&closest_node) {
-                for (dest, cost) in edges {
-                    if settled_nodes.contains(dest) {
-                        continue; // no point touching a settled node
-                    }
-                    // marking visited nodes
-                    if let Some(marker) = marker {
-                        self.visited_nodes.insert(*dest, marker);
-                    }
-                    let cost_from_closest = node_costs.get(&closest_node).unwrap() + *cost as u64;
-                    if let Some(current_best_cost) = node_costs.get(dest) {
-                        if current_best_cost <= &cost_from_closest {
-                            continue; // can't relax edge
-                        }
-                    }
-                    if self.heuristic.is_some() {
-                        h = *self.heuristic.as_ref().unwrap().get(dest).unwrap();
-                    } else {
-                        h = 0;
-                    }
-                    pq.push((Reverse(cost_from_closest + h), *dest));
-                    node_costs.insert(*dest, cost_from_closest);
+            let edges = &self.rn.graph[closest_node];
+            for &(dest, cost) in edges {
+                if settled_nodes[dest] {
+                    continue; // no point touching a settled node
                 }
+                // marking visited nodes
+                if let Some(marker) = marker {
+                    self.visited_nodes[dest] = marker;
+                }
+                let cost_from_closest = node_costs[closest_node] + cost as u64;
+                let current_best_cost = node_costs[dest];
+                if current_best_cost <= cost_from_closest {
+                    continue; // can't relax edge
+                }
+                h = self.heuristic[dest];
+                pq.push((Reverse(cost_from_closest + h), dest));
+                node_costs[dest] = cost_from_closest;
             }
         }
-        self.num_settled_nodes = settled_nodes.len();
+        self.num_settled_nodes = settled_nodes.iter().filter(|&x| *x).count();
         None
     }
 
-    pub fn set_heuristic(&mut self, h: HashMap<NodeId, u64>) {
-        self.heuristic = Some(h);
+    pub fn set_heuristic(&mut self, h: Vec<u64>) {
+        self.heuristic = h;
     }
 
-    pub fn simple_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
-        let mut h = HashMap::new();
-        for id in self.rn.nodes.keys() {
-            h.insert(*id, (self.rn.approx_distance(id, &target).unwrap() * 3600.0 / 110_000.0) as u64);
-        }
-        h
+    pub fn simple_heuristic(&self, target: usize) -> Vec<u64> {
+        (0..self.rn.nodes.len())
+        .map(
+            |p|
+            (self.rn.approx_distance(p, target) * 3600.0 / 110_000.0) as u64)
+        .collect()
     }
 }
 
 pub struct LandmarkAlgorithm<'a> {
     rn: &'a RoadNetwork,
-    landmarks: Vec<NodeId>,
-    index_map: HashMap<NodeId, usize>,
-    costs: Vec<(NodeId, Vec<u64>)>,
+    landmarks: Vec<usize>,
+    costs: Vec<Vec<u64>>, // vec len # nodes of vec len # landmarks
     rng: ThreadRng,
 }
 
 impl LandmarkAlgorithm<'_> {
     pub fn new(rn: &RoadNetwork) -> LandmarkAlgorithm<'_> {
-        let mut index_map = HashMap::new();
-        for (i, node) in rn.nodes.keys().enumerate() {
-            index_map.insert(*node, i);
-        }
         LandmarkAlgorithm {
             rn,
             landmarks: Vec::new(),
-            index_map,
-            costs: Vec::new(),
+            costs: vec![Vec::new(); rn.nodes.len()],
             rng: rand::thread_rng(),
         }
     }
 
     pub fn select_landmarks(&mut self, n: usize) {
         self.landmarks.clear();
-        self.landmarks = self.rn.nodes.keys().choose_multiple(&mut self.rng, n).iter().map(|x| *(*x)).collect();
+        self.landmarks = (0..self.rn.nodes.len()).choose_multiple(&mut self.rng, n);
     }
 
     // simplified and modified to give all distances from a single source as a vec
-    fn dijkstra(&self, source: NodeId) -> Vec<u64> {
-        let mut settled_nodes = HashSet::new();
-        let mut pq: BinaryHeap<(Reverse<u64>, NodeId)> = BinaryHeap::new(); // defaults to max-heap
-        let mut node_costs = HashMap::<NodeId, u64>::new();
+    fn dijkstra(&self, source: usize) -> Vec<u64> {
+        let mut settled_nodes = vec![false; self.rn.nodes.len()];
+        let mut pq = BinaryHeap::new(); // defaults to max-heap
+        let mut node_costs: Vec<u64> = vec![u64::MAX; self.rn.nodes.len()];
         pq.push((Reverse(0), source));
-        node_costs.insert(source, 0);
+        node_costs[source] = 0;
         while let Some((_, closest_node)) = pq.pop() {
-            if settled_nodes.contains(&closest_node) {
+            if settled_nodes[closest_node] {
                 continue; // no point going back over a settled node
             }
-            settled_nodes.insert(closest_node);
-            if let Some(edges) = self.rn.graph.get(&closest_node) {
-                for (dest, cost) in edges {
-                    if settled_nodes.contains(dest) {
-                        continue; // no point touching a settled node
-                    }
-                    let cost_from_closest = node_costs.get(&closest_node).unwrap() + *cost as u64;
-                    if let Some(current_best_cost) = node_costs.get(dest) {
-                        if current_best_cost <= &cost_from_closest {
-                            continue; // can't relax edge
-                        }
-                    }
-                    pq.push((Reverse(cost_from_closest), *dest));
-                    node_costs.insert(*dest, cost_from_closest);
+            settled_nodes[closest_node] = true;
+            let edges = &self.rn.graph[closest_node];
+            for &(dest, cost) in edges {
+                if settled_nodes[dest] {
+                    continue; // no point touching a settled node
                 }
+                let cost_from_closest = node_costs[closest_node] + cost as u64;
+                let current_best_cost = node_costs[dest];
+                if current_best_cost <= cost_from_closest {
+                    continue; // can't relax edge
+                }
+                pq.push((Reverse(cost_from_closest), dest));
+                node_costs[dest] = cost_from_closest;
             }
         }
-        let mut dists = vec![0; self.rn.nodes.len()];
-        for (n, cost) in node_costs {
-            dists[*self.index_map.get(&n).unwrap()] = cost;
-        }
-        dists
+        node_costs
     }
 
     pub fn precompute_landmark_distances(&mut self) {
-        self.costs.clear();
-        self.costs.resize(self.rn.nodes.len(), (osmpbfreader::NodeId(0), Vec::new()));
-        for (n, i) in self.index_map.iter() {
-            self.costs[*i].0 = *n;
-        }
+        self.costs.fill(Vec::new());
         for l in self.landmarks.iter() {
             for (i, cost) in self.dijkstra(*l).iter().enumerate() {
-                self.costs[i].1.push(*cost);
+                self.costs[i].push(*cost);
             }
         }
     }
 
-    pub fn landmark_heuristic(&self, target: NodeId) -> HashMap<NodeId, u64> {
-        let mut h = HashMap::<NodeId, u64>::new();
-        let l_t_dists: &Vec<u64> = &self.costs[*self.index_map.get(&target).unwrap()].1;
-        for (node, dists) in self.costs.iter() {
-            h.insert(*node, dists.iter().zip(l_t_dists.iter()).map(|(x, y)| x.abs_diff(*y)).max().unwrap());
+    pub fn landmark_heuristic(&self, target: usize) -> Vec<u64> {
+        let mut h = vec![0; self.rn.nodes.len()];
+        let l_t_dists: &Vec<u64> = &self.costs[target];
+        for (node, dists) in self.costs.iter().enumerate() {
+            h[node] = dists.iter().zip(l_t_dists.iter()).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
         }
         h
     }
@@ -343,14 +322,14 @@ mod tests {
         println!("Reading Saarland OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 1_119_289);
-        //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 227_826);
+        assert_eq!(rn.graph.iter().map(|v| v.len()).sum::<usize>() / 2, 227_826);
         let now = Instant::now();
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
         println!("Saarland LCC reduction took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 213_567);
-        // assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 225_506);
+        assert_eq!(rn.graph.iter().map(|v| v.len()).sum::<usize>() / 2, 225_506);
     }
 
     #[test]
@@ -362,9 +341,9 @@ mod tests {
         let mut total_cost = 0;
         let mut total_settled_nodes = 0;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
@@ -384,12 +363,12 @@ mod tests {
         let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            d.set_heuristic(d.simple_heuristic(***dst));
+            d.set_heuristic(d.simple_heuristic(*dst));
             total_heuristic_calc_time += now.elapsed();
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
@@ -410,26 +389,22 @@ mod tests {
         let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
         let mut landmarks_precompute_time = Duration::ZERO;
-        let mut index_map_creation_time = Duration::ZERO;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        let now = Instant::now();
         let mut l = LandmarkAlgorithm::new(&rn);
-        index_map_creation_time += now.elapsed();
         l.select_landmarks(42);
         let now = Instant::now();
         l.precompute_landmark_distances();
         landmarks_precompute_time += now.elapsed();
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            d.set_heuristic(l.landmark_heuristic( ***dst));
+            d.set_heuristic(l.landmark_heuristic( *dst));
             total_heuristic_calc_time += now.elapsed();
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
         println!("------  A-star Landmark (S) -------");
-        println!("Index map creation time: {} s", index_map_creation_time.as_secs_f32());
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
@@ -445,14 +420,14 @@ mod tests {
         println!("Reading BW OSM took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 14_593_458);
-        //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_642_949);
+        assert_eq!(rn.graph.iter().map(|v| v.len()).sum::<usize>() / 2, 2_642_949);
         let now = Instant::now();
         rn.reduce_to_largest_connected_component();
         let elapsed_time = now.elapsed();
         println!("BW LCC reduction took {} s", elapsed_time.as_secs_f32());
         println!("{rn}");
         assert_eq!(rn.nodes.len(), 2_458_230);
-        //assert_eq!(rn.graph.iter().map(|(_, v)| v.len()).sum::<usize>() / 2, 2_613_338);
+        assert_eq!(rn.graph.iter().map(|v| v.len()).sum::<usize>() / 2, 2_613_338);
     }
 
     #[test]
@@ -464,9 +439,9 @@ mod tests {
         let mut total_cost = 0;
         let mut total_settled_nodes = 0;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
@@ -486,12 +461,12 @@ mod tests {
         let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            d.set_heuristic(d.simple_heuristic(***dst));
+            d.set_heuristic(d.simple_heuristic(*dst));
             total_heuristic_calc_time += now.elapsed();
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
@@ -512,26 +487,22 @@ mod tests {
         let mut total_settled_nodes = 0;
         let mut total_heuristic_calc_time = Duration::ZERO;
         let mut landmarks_precompute_time = Duration::ZERO;
-        let mut index_map_creation_time = Duration::ZERO;
         let mut d = DijkstrasAlgorithm::new(&rn);
-        let now = Instant::now();
         let mut l = LandmarkAlgorithm::new(&rn);
-        index_map_creation_time += now.elapsed();
         l.select_landmarks(42);
         let now = Instant::now();
         l.precompute_landmark_distances();
         landmarks_precompute_time += now.elapsed();
-        for (src, dst) in rn.nodes.keys().collect::<Vec<_>>().iter().choose_multiple(&mut rng, 200).iter().tuples() {
+        for (src, dst) in (0..rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
             let now = Instant::now();
-            d.set_heuristic(l.landmark_heuristic( ***dst));
+            d.set_heuristic(l.landmark_heuristic( *dst));
             total_heuristic_calc_time += now.elapsed();
             let now = Instant::now();
-            total_cost += d.compute_shortest_path(***src, Some(***dst), None).unwrap();
+            total_cost += d.compute_shortest_path(*src, Some(*dst), None).unwrap();
             total_elapsed_time += now.elapsed();
             total_settled_nodes += d.num_settled_nodes;
         }
         println!("------  A-star Landmark (BW) -------");
-        println!("Index map creation time: {} s", index_map_creation_time.as_secs_f32());
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
