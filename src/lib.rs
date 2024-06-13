@@ -205,6 +205,7 @@ pub struct DijkstrasAlgorithm<'a> {
     num_settled_nodes: usize,
     heuristic: Vec<u64>,
     consider_arc_flags: bool,
+    parents: Vec<Option<usize>>,
 }
 
 impl DijkstrasAlgorithm<'_> {
@@ -215,6 +216,7 @@ impl DijkstrasAlgorithm<'_> {
             num_settled_nodes: 0, 
             heuristic: vec![0; rn.nodes.len()],
             consider_arc_flags: false,
+            parents: vec![None; rn.nodes.len()],
         }
     }
 
@@ -226,16 +228,17 @@ impl DijkstrasAlgorithm<'_> {
         let mut pq = BinaryHeap::new(); // defaults to max-heap
         let mut node_costs: Vec<u64> = vec![u64::MAX; self.rn.nodes.len()];
         let mut h = self.heuristic[source];
-        pq.push((Reverse(h), source));
+        pq.push((Reverse(h), source, None));
         node_costs[source] = 0;
         if let Some(marker) = marker {
             self.visited_nodes[source] = marker;
         }
-        while let Some((_, closest_node)) = pq.pop() {
+        while let Some((_, closest_node, parent)) = pq.pop() {
             if settled_nodes[closest_node] {
                 continue; // no point going back over a settled node
             }
             settled_nodes[closest_node] = true;
+            self.parents[closest_node] = parent;
             if target.is_some_and(|target| closest_node == target) { // found target
                 self.num_settled_nodes = settled_nodes.iter().filter(|&x| *x).count();
                 return Some(node_costs[closest_node]);
@@ -258,7 +261,7 @@ impl DijkstrasAlgorithm<'_> {
                     continue; // can't relax edge
                 }
                 h = self.heuristic[dest];
-                pq.push((Reverse(cost_from_closest + h), dest));
+                pq.push((Reverse(cost_from_closest + h), dest, Some(closest_node)));
                 node_costs[dest] = cost_from_closest;
             }
         }
