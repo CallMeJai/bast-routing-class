@@ -224,7 +224,7 @@ impl DijkstrasAlgorithm<'_> {
     // marks visited nodes with marker if marker exists.
     pub fn compute_shortest_path(&mut self, source: usize, target: Option<usize>,
         marker: Option<usize>) -> Option<u64> {
-        let self.parents = vec![None; rn.nodes.len()];
+        self.parents = vec![None; rn.nodes.len()];
         let mut settled_nodes = vec![false; self.rn.nodes.len()];
         let mut pq = BinaryHeap::new(); // defaults to max-heap
         let mut node_costs: Vec<u64> = vec![u64::MAX; self.rn.nodes.len()];
