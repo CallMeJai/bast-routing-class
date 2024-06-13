@@ -4,11 +4,36 @@ use geographiclib_rs::{Geodesic, InverseGeodesic};
 use std::{cmp::Reverse, collections::{BinaryHeap, HashMap}, path::Path};
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 
+#[derive(Copy, Clone, Debug)]
+struct Arc {
+    to_node: usize,
+    cost: u32,
+    arc_flag: bool,
+}
+
+impl Arc {
+    fn new(to_node: usize, cost: u32, arc_flag: bool) -> Arc {
+        Arc{to_node, cost, arc_flag}
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct Node {
+    node_id: NodeId,
+    lat: f64,
+    lon: f64,
+}
+
+impl Node {
+    fn new(node_id: NodeId, lat: f64, lon: f64) -> Node {
+        Node{node_id, lat, lon}
+    }
+}
 
 pub struct RoadNetwork {
     index_map: HashMap<NodeId, usize>,
-    graph: Vec<Vec<(usize, u32)>>,
-    nodes: Vec<(NodeId, (f64, f64))>
+    graph: Vec<Vec<Arc>>,
+    nodes: Vec<Node>
 }
 
 impl RoadNetwork {
@@ -29,7 +54,7 @@ impl RoadNetwork {
             match obj {
                 OsmObj::Node(node) => {
                     rn.index_map.insert(node.id, rn.nodes.len());
-                    rn.nodes.push((node.id, (node.lat(), node.lon())));
+                    rn.nodes.push(Node::new(node.id, node.lat(), node.lon()));
                     rn.graph.push(Vec::new());
                 },
                 OsmObj::Way(way) => {
@@ -40,8 +65,8 @@ impl RoadNetwork {
                                 let n_1_i = *rn.index_map.get(node_1).unwrap();
                                 let n_2_i = *rn.index_map.get(node_2).unwrap();
                                 let cost = (rn.approx_distance(n_1_i, n_2_i) / speed) as u32;
-                                rn.graph[n_1_i].push((n_2_i, cost));
-                                rn.graph[n_2_i].push((n_1_i, cost));
+                                rn.graph[n_1_i].push(Arc::new(n_2_i, cost, false));
+                                rn.graph[n_2_i].push(Arc::new(n_1_i, cost, false));
                             }
                         }
                     } 
@@ -76,15 +101,15 @@ impl RoadNetwork {
     // distance in m
     pub fn distance(&self, id_1: usize, id_2: usize) -> f64 {
         let g = Geodesic::wgs84();
-        let ((_, p_1), (_, p_2)) = (self.nodes[id_1], self.nodes[id_2]);
-        g.inverse(p_1.0, p_1.1, p_2.0, p_2.1)
+        let (n_1, n_2) = (self.nodes[id_1], self.nodes[id_2]);
+        g.inverse(n_1.lat, n_1.lon, n_2.lat, n_2.lon)
     }
 
     // approximate distance relevant to germany
     fn approx_distance(&self, id_1: usize, id_2: usize) -> f64 {
-        let ((_, p_1), (_, p_2)) = (self.nodes[id_1], self.nodes[id_2]);
-        let diff_lat = (p_1.0 - p_2.0) * 111_229.0;
-        let diff_lon = (p_1.1 - p_2.1) * 71_695.0;
+        let (n_1, n_2) = (self.nodes[id_1], self.nodes[id_2]);
+        let diff_lat = (n_1.lat - n_2.lat) * 111_229.0;
+        let diff_lon = (n_1.lon - n_2.lat) * 71_695.0;
         f64::sqrt(diff_lat * diff_lat + diff_lon * diff_lon)
     }
 
@@ -120,20 +145,27 @@ impl RoadNetwork {
             .counts().into_iter().max_by_key(|&(_, count)| count).unwrap();
         let index_map = d.visited_nodes.iter().enumerate()
             .filter(|(_i, &n)| n == lcc_node).enumerate()
-            .map(|(new_idx, (old_idx, _lcc_node))| (self.nodes[old_idx].0, new_idx)).collect();
+            .map(|(new_idx, (old_idx, _lcc_node))| (self.nodes[old_idx].node_id, new_idx)).collect();
         let old_to_new_index_map: HashMap<usize, usize> = d.visited_nodes.iter().enumerate()
             .filter(|(_i, &n)| n == lcc_node).enumerate()
             .map(|(new_idx, (old_idx, _lcc_node))| (old_idx, new_idx)).collect();
-        let mut nodes = vec![(NodeId(0), (0.0, 0.0)); old_to_new_index_map.len()];
+        let mut nodes = vec![Node::new(NodeId(0), 0.0, 0.0); old_to_new_index_map.len()];
         for (i, val) in self.nodes.iter().enumerate() {
             if let Some(&idx) = old_to_new_index_map.get(&i) {
                 nodes[idx] = *val;
             }
         }
-        let mut graph: Vec<Vec<(usize, u32)>> = vec![Vec::new(); nodes.len()];
+        let mut graph: Vec<Vec<Arc>> = vec![Vec::new(); nodes.len()];
         for (i, val) in self.graph.iter().enumerate() {
             if let Some(&idx) = old_to_new_index_map.get(&i) {
-                graph[idx] = val.iter().map(|(i, cost)| (*old_to_new_index_map.get(i).unwrap(), *cost)).collect();
+                graph[idx] = val.iter().map(
+                    |Arc{to_node: i, cost, arc_flag: flag}| 
+                    Arc::new(
+                        *old_to_new_index_map.get(i).unwrap(), 
+                        *cost, 
+                        *flag
+                    )
+                ).collect();
             }
         }
         self.index_map = index_map;
@@ -172,11 +204,18 @@ pub struct DijkstrasAlgorithm<'a> {
     visited_nodes: Vec<usize>,
     num_settled_nodes: usize,
     heuristic: Vec<u64>,
+    consider_arc_flags: bool,
 }
 
 impl DijkstrasAlgorithm<'_> {
     pub fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
-        DijkstrasAlgorithm{ rn, visited_nodes : vec![usize::MAX; rn.nodes.len()], num_settled_nodes: 0, heuristic: vec![0; rn.nodes.len()]}
+        DijkstrasAlgorithm{ 
+            rn, 
+            visited_nodes : vec![usize::MAX; rn.nodes.len()], 
+            num_settled_nodes: 0, 
+            heuristic: vec![0; rn.nodes.len()],
+            consider_arc_flags: false,
+        }
     }
 
     // returns cost of shortest path to target if target exists.
@@ -202,7 +241,10 @@ impl DijkstrasAlgorithm<'_> {
                 return Some(node_costs[closest_node]);
             }
             let edges = &self.rn.graph[closest_node];
-            for &(dest, cost) in edges {
+            for &Arc{to_node: dest, cost, arc_flag} in edges {
+                if self.consider_arc_flags && !arc_flag {
+                    continue; // not marked by arc flag
+                }
                 if settled_nodes[dest] {
                     continue; // no point touching a settled node
                 }
@@ -235,6 +277,10 @@ impl DijkstrasAlgorithm<'_> {
             (self.rn.approx_distance(p, target) * 3600.0 / 110_000.0) as u64)
         .collect()
     }
+
+    pub fn set_consider_arc_flags(&mut self, consider_arc_flags: bool) {
+        self.consider_arc_flags = consider_arc_flags;
+    } 
 }
 
 pub struct LandmarkAlgorithm<'a> {
@@ -272,7 +318,7 @@ impl LandmarkAlgorithm<'_> {
             }
             settled_nodes[closest_node] = true;
             let edges = &self.rn.graph[closest_node];
-            for &(dest, cost) in edges {
+            for &Arc{to_node: dest, cost, ..} in edges {
                 if settled_nodes[dest] {
                     continue; // no point touching a settled node
                 }
