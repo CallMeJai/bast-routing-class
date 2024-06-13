@@ -109,7 +109,7 @@ impl RoadNetwork {
     fn approx_distance(&self, id_1: usize, id_2: usize) -> f64 {
         let (n_1, n_2) = (self.nodes[id_1], self.nodes[id_2]);
         let diff_lat = (n_1.lat - n_2.lat) * 111_229.0;
-        let diff_lon = (n_1.lon - n_2.lat) * 71_695.0;
+        let diff_lon = (n_1.lon - n_2.lon) * 71_695.0;
         f64::sqrt(diff_lat * diff_lat + diff_lon * diff_lon)
     }
 
