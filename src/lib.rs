@@ -357,9 +357,135 @@ impl LandmarkAlgorithm<'_> {
     }
 }
 
+pub struct ArcFlagsAlgorithm<'a> {
+    rn: &'a mut RoadNetwork,
+    lat_min: f64,
+    lat_max: f64,
+    lon_min: f64,
+    lon_max: f64,
+    num_settled_nodes: usize,
+}
+
+impl<'a> ArcFlagsAlgorithm<'a> {
+    pub fn new(rn: &'a mut RoadNetwork, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) -> ArcFlagsAlgorithm<'a> {
+        ArcFlagsAlgorithm{rn, lat_min, lat_max, lon_min, lon_max, num_settled_nodes: 0}
+    }
+
+    fn contains(&self, node: usize) -> bool {
+        let Node{lat, lon, ..} = self.rn.nodes[node];
+        lat >= self.lat_min && lat <= self.lat_max && lon >= self.lon_min && lon <= self.lon_max
+    }
+
+    fn compute_boundary_nodes(&self) -> Vec<usize> {
+        let mut boundary_nodes = Vec::new();
+        for (n, edges) in self.rn.graph.iter().enumerate() {
+            if !self.contains(n) {
+                continue; // n not in region
+            }
+            for Arc{to_node, ..} in edges {
+                if !self.contains(*to_node) {
+                    boundary_nodes.push(n); // n is a boundary node
+                    break;
+                }
+            }
+        }
+        boundary_nodes
+    }
+
+    // simplified and modified to give vec of parent nodes
+    fn dijkstra(&self, source: usize, target: Option<usize>) -> Vec<Option<usize>> {
+        let mut parents = vec![None; self.rn.nodes.len()];
+        let mut settled_nodes: Vec<bool> = vec![false; self.rn.nodes.len()];
+        let mut pq = BinaryHeap::new(); // defaults to max-heap
+        let mut node_costs: Vec<u64> = vec![u64::MAX; self.rn.nodes.len()];
+        pq.push((Reverse(0), source, None));
+        node_costs[source] = 0;
+        while let Some((_, closest_node, parent)) = pq.pop() {
+            if settled_nodes[closest_node] {
+                continue; // no point going back over a settled node
+            }
+            settled_nodes[closest_node] = true;
+            parents[closest_node] = parent;
+            if target.is_some_and(|target| closest_node == target) { // found target
+                return parents;
+            }
+            let edges = &self.rn.graph[closest_node];
+            for &Arc{to_node: dest, cost, ..} in edges {
+                if settled_nodes[dest] {
+                    continue; // no point touching a settled node
+                }
+                let cost_from_closest = node_costs[closest_node] + cost as u64;
+                let current_best_cost = node_costs[dest];
+                if current_best_cost <= cost_from_closest {
+                    continue; // can't relax edge
+                }
+                pq.push((Reverse(cost_from_closest), dest, Some(closest_node)));
+                node_costs[dest] = cost_from_closest;
+            }
+        }
+        parents
+    }
+
+
+    pub fn precompute_arc_flags(&mut self) {
+        let mut indices: Vec<(usize, usize)> = Vec::new();
+        for (n, edges) in self.rn.graph.iter().enumerate() {
+            if !self.contains(n) {
+                continue; // n not in region
+            }
+            for (i, Arc{to_node, ..}) in edges.iter().enumerate() {
+                if self.contains(*to_node) {
+                    indices.push((n, i));
+                }
+            }
+        }
+        for (i, j) in indices {
+            self.rn.graph[i][j].arc_flag = true;
+        }
+        let boundary_nodes = self.compute_boundary_nodes();
+        for &node in &boundary_nodes {
+            let parents = self.dijkstra(node, None);
+            for (mut node, mut parent_option) in parents.iter().enumerate() {
+                while parent_option.is_some() {
+                    let parent = parent_option.unwrap();
+                    if self.rn.graph[node].iter().any(|arc| arc.to_node == parent && arc.arc_flag) {
+                        break; // arc bw node and node's parent already marked so all ancestors should already be marked
+                    }
+                    for arc in self.rn.graph[node].iter_mut().filter(|arc| arc.to_node == parent) {
+                        if !arc.arc_flag {
+                            arc.arc_flag = true;
+                        }
+                    }
+                    node = parent;
+                    parent_option = &parents[parent];
+                }
+            }
+        }
+    }
+
+    pub fn compute_shortest_path(&mut self, source: usize, target: usize) -> Result<u64, String> {
+        if !self.contains(target) {
+            Err(format!("Target node at {}, {} not in bounds [{}, {}; {}, {}]",
+                self.rn.nodes[target].lat,
+                self.rn.nodes[target].lon,
+                self.lat_min,
+                self.lon_min,
+                self.lat_max,
+                self.lon_max
+            ))
+        } else {
+            let mut d = DijkstrasAlgorithm::new(self.rn);
+            d.set_consider_arc_flags(true);
+            let res = d.compute_shortest_path(source, Some(target), None).unwrap();
+            self.num_settled_nodes = d.num_settled_nodes;
+            Ok(res)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork};
+    use crate::{ArcFlagsAlgorithm, DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork};
     use std::time::{Duration, Instant};
     use rand::seq::IteratorRandom;
     use itertools::Itertools;
@@ -463,6 +589,39 @@ mod tests {
     }
 
     #[test]
+    fn saarland_arc_flags() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut arc_flags_precompute_time = Duration::ZERO;
+        let mut a = ArcFlagsAlgorithm::new(&mut rn, 49.20, 49.25, 6.95, 7.05);
+        let now = Instant::now();
+        a.precompute_arc_flags();
+        arc_flags_precompute_time += now.elapsed();
+        let mut target_nodes = Vec::new();
+        while target_nodes.len() < 100 {
+            let node = (0..a.rn.nodes.len()).choose(&mut rng).unwrap();
+            if a.contains(node) {
+                target_nodes.push(node);
+            }
+        }
+        for (src, dst) in (0..a.rn.nodes.len()).choose_multiple(&mut rng, 100).iter().zip(target_nodes) {
+            let now = Instant::now();
+            total_cost += a.compute_shortest_path(*src, dst).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += a.num_settled_nodes;
+        }
+        println!("--------  Arc Flags (S) ---------");
+        println!("Arc flags precompute time: {} s", arc_flags_precompute_time.as_secs_f32());
+        println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
+    }
+
+    #[test]
     fn baden_wuerttemberg_osm() {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
@@ -555,6 +714,39 @@ mod tests {
         println!("------  A-star Landmark (BW) -------");
         println!("Landmark precompute time: {} s", landmarks_precompute_time.as_secs_f32());
         println!("Average heuristic calculation time: {} s", total_heuristic_calc_time.as_secs_f32() / 100.0);
+        println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
+    }
+
+    #[test]
+    fn baden_wuerttemberg_arc_flags() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_cost = 0;
+        let mut total_settled_nodes = 0;
+        let mut arc_flags_precompute_time = Duration::ZERO;
+        let mut a = ArcFlagsAlgorithm::new(&mut rn, 47.95, 48.05, 7.75, 7.90);
+        let now = Instant::now();
+        a.precompute_arc_flags();
+        arc_flags_precompute_time += now.elapsed();
+        let mut target_nodes = Vec::new();
+        while target_nodes.len() < 100 {
+            let node = (0..a.rn.nodes.len()).choose(&mut rng).unwrap();
+            if a.contains(node) {
+                target_nodes.push(node);
+            }
+        }
+        for (src, dst) in (0..a.rn.nodes.len()).choose_multiple(&mut rng, 100).iter().zip(target_nodes) {
+            let now = Instant::now();
+            total_cost += a.compute_shortest_path(*src, dst).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += a.num_settled_nodes;
+        }
+        println!("--------  Arc Flags (BW) ---------");
+        println!("Arc flags precompute time: {} s", arc_flags_precompute_time.as_secs_f32());
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
