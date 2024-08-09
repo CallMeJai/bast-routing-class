@@ -2,7 +2,7 @@ use osmpbfreader::{NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
 use std::{cmp::Reverse, collections::{BinaryHeap, HashMap}, path::Path};
-use rand::{rngs::ThreadRng, seq::IteratorRandom};
+use rand::{rngs::ThreadRng, seq::IteratorRandom, seq::SliceRandom};
 
 #[derive(Copy, Clone, Debug)]
 struct Arc {
@@ -483,9 +483,145 @@ impl<'a> ArcFlagsAlgorithm<'a> {
     }
 }
 
+pub struct ContractionHierarchies<'a> {
+    rn: &'a mut RoadNetwork,
+    node_ordering: Vec<usize>,
+    rng: ThreadRng,
+    visited_nodes: Vec<usize>,
+    settled_nodes: Vec<bool>,
+    dists: Vec<u64>,
+    cost_upper_bound: u64,
+    max_num_settled_nodes: u64,
+}
+
+impl<'a> ContractionHierarchies<'a> {
+    pub fn new(rn: &'a mut RoadNetwork) -> ContractionHierarchies<'a> {
+        let num_nodes = rn.nodes.len();
+        let node_ordering = (0..num_nodes).collect();
+        for arc_vec in rn.graph.iter_mut() {
+            for arc in arc_vec {
+                arc.arc_flag = true;
+            }
+        }
+        ContractionHierarchies{
+            rn,
+            node_ordering,
+            rng: rand::thread_rng(),
+            visited_nodes: Vec::new(),
+            settled_nodes: vec![false; num_nodes],
+            dists: vec![u64::MAX; num_nodes],
+            cost_upper_bound: u64::MAX,
+            max_num_settled_nodes: u64::MAX,
+        }
+    }
+
+    pub fn compute_random_node_ordering(&mut self) {
+        self.node_ordering.shuffle(&mut self.rng);
+    }
+
+    pub fn contract_node(&mut self, i: usize) -> (u32, i32) {
+        let mut shortcuts: i32 = 0;
+        let mut num_arcs_removed: i32 = 0;
+        let v = self.node_ordering[i];
+        // finding in-/out-bound nodes
+        let adjacent_nodes = self.rn.graph[v].iter().filter(|x| x.arc_flag).map(|x| x.to_node).collect::<Vec<_>>();
+        // calculating D_ijs
+        let d: Vec<Vec<_>> = adjacent_nodes.iter().map(
+            |&u|
+            adjacent_nodes.iter().map(
+                |&w|
+                if u == w {
+                    0
+                } else {
+                    self.rn.graph[v].iter().find(|arc| arc.to_node == u).unwrap().cost
+                     + self.rn.graph[v].iter().find(|arc| arc.to_node == w).unwrap().cost
+                }
+            ).collect()
+        ).collect();
+        // removing arcs adjacent to v
+        for arc in self.rn.graph[v].iter_mut() {
+            num_arcs_removed += 1;
+            arc.arc_flag = false;
+        }
+        for &n in adjacent_nodes.iter() {
+            for arc in self.rn.graph[n].iter_mut() {
+                if arc.to_node == v {
+                    arc.arc_flag = false;
+                }
+            }
+        }
+        // check if and add if shortcut is necessary
+        for (i, &u) in adjacent_nodes.iter().enumerate() {
+            self.set_cost_upper_bound(*d[i].iter().max().unwrap() as u64);
+            self.dijkstra(u);
+            for (j, &w) in adjacent_nodes.iter().enumerate() {
+                if self.dists[w] > d[i][j] as u64 {
+                    shortcuts += 1;
+                    self.rn.graph[u].push(Arc{to_node: w, cost: d[i][j], arc_flag: true});
+                    self.rn.graph[w].push(Arc{to_node: u, cost: d[i][j], arc_flag: true});
+                }
+            }
+        }
+        (shortcuts as u32, shortcuts - num_arcs_removed)
+    }
+
+    fn dijkstra(&mut self, source: usize) {
+        let mut num_settled_nodes = 0;
+        let mut pq = BinaryHeap::new(); // defaults to max-heap
+        for &n in self.visited_nodes.iter() {
+            self.dists[n] = u64::MAX;
+            self.settled_nodes[n] = false;
+        }
+        self.visited_nodes.clear();
+        pq.push((Reverse(0), source));
+        self.dists[source] = 0;
+        self.visited_nodes.push(source);
+        while let Some((Reverse(cost), closest_node)) = pq.pop() {
+            if self.settled_nodes[closest_node] {
+                continue; // no point going back over a settled node
+            }
+            self.settled_nodes[closest_node] = true;
+            num_settled_nodes += 1;
+            if cost > self.cost_upper_bound {
+                return;
+            }
+            if num_settled_nodes >= self.max_num_settled_nodes {
+                return;
+            }
+            let edges = &self.rn.graph[closest_node];
+            for &Arc{to_node: dest, cost, arc_flag} in edges {
+                if !arc_flag {
+                    continue; // not marked by arc flag
+                }
+                if self.settled_nodes[dest] {
+                    continue; // no point touching a settled node
+                }
+                // marking visited nodes
+                self.visited_nodes.push(dest);
+                let cost_from_closest = self.dists[closest_node] + cost as u64;
+                let current_best_cost = self.dists[dest];
+                if current_best_cost <= cost_from_closest {
+                    continue; // can't relax edge
+                }
+                pq.push((Reverse(cost_from_closest), dest));
+                self.dists[dest] = cost_from_closest;
+            }
+        }
+    }
+
+
+    fn set_cost_upper_bound(&mut self, cost: u64) {
+        self.cost_upper_bound = cost;
+    }
+
+    pub fn set_max_num_settled_nodes(&mut self, num: u64) {
+        self.max_num_settled_nodes = num;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{ArcFlagsAlgorithm, DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork, Node, Arc};
+    use crate::{ArcFlagsAlgorithm, ContractionHierarchies, DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork, Node, Arc};
     use std::time::{Duration, Instant};
     use osmpbfreader::NodeId;
     use rand::seq::IteratorRandom;
