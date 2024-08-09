@@ -679,33 +679,17 @@ mod tests {
         rn.graph[13].push(Arc::new(8, 2, true));
         rn.graph[13].push(Arc::new(10, 1, true));
 
-        let mut shortcuts_hist = vec![0; 5];
-        let mut edge_difference_hist = vec![0; 5];
         let mut ch = ContractionHierarchies::new(&mut rn);
         for i in 1..14 {
-            let (shortcuts, edge_differences) = ch.contract_node(i);
+            let (shortcuts, _) = ch.contract_node(i);
             if i != 10 && i != 11 {
                 assert_eq!(shortcuts, 0);
             }
             else {
                 assert_eq!(shortcuts, 1);
             }
-            match shortcuts {
-                0 => shortcuts_hist[0] += 1,
-                1 => shortcuts_hist[1] += 1,
-                2 => shortcuts_hist[2] += 1,
-                3 => shortcuts_hist[3] += 1,
-                4..=u32::MAX => shortcuts_hist[4] += 1
-            }
-            match edge_differences {
-                i32::MIN..=-3 => edge_difference_hist[0] += 1,
-                -2 => edge_difference_hist[1] += 1,
-                -1..=1 => edge_difference_hist[2] += 1,
-                2 => edge_difference_hist[3] += 1,
-                3..=i32::MAX => edge_difference_hist[4] += 1
-            }
         }
-        assert_eq!(rn.graph.iter().map(|edges| edges.iter().count()).sum::<usize>(), 46);
+        assert_eq!(rn.graph.iter().map(|edges| edges.len()).sum::<usize>(), 46);
         assert_eq!(rn.graph[11].iter().find(|arc| arc.to_node == 13).unwrap().cost, 2);
         assert_eq!(rn.graph[13].iter().find(|arc| arc.to_node == 11).unwrap().cost, 2);
         assert_eq!(rn.graph[12].iter().find(|arc| arc.to_node == 13).unwrap().cost, 3);
@@ -850,8 +834,8 @@ mod tests {
         rn.reduce_to_largest_connected_component();
         let num_contractions = 1000;
         let mut total_contraction_time = Duration::ZERO;
-        let mut shortcuts_hist = vec![0; 5];
-        let mut edge_difference_hist = vec![0; 5];
+        let mut shortcuts_hist = [0; 5];
+        let mut edge_difference_hist = [0; 5];
         let mut ch = ContractionHierarchies::new(&mut rn);
         ch.compute_random_node_ordering();
         ch.set_max_num_settled_nodes(20);
@@ -1019,8 +1003,8 @@ mod tests {
         rn.reduce_to_largest_connected_component();
         let num_contractions = 1000;
         let mut total_contraction_time = Duration::ZERO;
-        let mut shortcuts_hist = vec![0; 5];
-        let mut edge_difference_hist = vec![0; 5];
+        let mut shortcuts_hist = [0; 5];
+        let mut edge_difference_hist = [0; 5];
         let mut ch = ContractionHierarchies::new(&mut rn);
         ch.compute_random_node_ordering();
         ch.set_max_num_settled_nodes(20);
