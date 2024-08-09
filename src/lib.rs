@@ -485,10 +485,97 @@ impl<'a> ArcFlagsAlgorithm<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ArcFlagsAlgorithm, DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork};
+    use crate::{ArcFlagsAlgorithm, DijkstrasAlgorithm, LandmarkAlgorithm, RoadNetwork, Node, Arc};
     use std::time::{Duration, Instant};
+    use osmpbfreader::NodeId;
     use rand::seq::IteratorRandom;
     use itertools::Itertools;
+
+    #[test]
+    fn lecture_node_contraction() {
+        let mut rn = RoadNetwork::new();
+        for i in 0..14 {
+            rn.nodes.push(Node::new(NodeId(i as i64), 0.0, 0.0));
+            rn.index_map.insert(NodeId(i as i64), i);
+            rn.graph.push(Vec::new())
+        }
+
+        rn.graph[1].push(Arc::new(2, 3, true));
+        rn.graph[1].push(Arc::new(6, 7, true));
+        rn.graph[1].push(Arc::new(13, 4, true));
+        rn.graph[2].push(Arc::new(1, 3, true));
+        rn.graph[2].push(Arc::new(8, 2, true));
+        rn.graph[2].push(Arc::new(13, 5, true));
+        rn.graph[3].push(Arc::new(4, 4, true));
+        rn.graph[3].push(Arc::new(5, 5, true));
+        rn.graph[3].push(Arc::new(12, 2, true));
+        rn.graph[4].push(Arc::new(3, 4, true));
+        rn.graph[4].push(Arc::new(7, 4, true));
+        rn.graph[4].push(Arc::new(12, 3, true));
+        rn.graph[5].push(Arc::new(3, 5, true));
+        rn.graph[5].push(Arc::new(6, 6, true));
+        rn.graph[5].push(Arc::new(11, 3, true));
+        rn.graph[6].push(Arc::new(1, 7, true));
+        rn.graph[6].push(Arc::new(5, 6, true));
+        rn.graph[6].push(Arc::new(10, 4, true));
+        rn.graph[7].push(Arc::new(4, 4, true));
+        rn.graph[7].push(Arc::new(9, 7, true));
+        rn.graph[7].push(Arc::new(11, 3, true));
+        rn.graph[8].push(Arc::new(2, 2, true));
+        rn.graph[8].push(Arc::new(9, 5, true));
+        rn.graph[8].push(Arc::new(13, 2, true));
+        rn.graph[9].push(Arc::new(7, 7, true));
+        rn.graph[9].push(Arc::new(8, 5, true));
+        rn.graph[9].push(Arc::new(10, 3, true));
+        rn.graph[10].push(Arc::new(6, 4, true));
+        rn.graph[10].push(Arc::new(9, 3, true));
+        rn.graph[10].push(Arc::new(11, 1, true));
+        rn.graph[10].push(Arc::new(13, 1, true));
+        rn.graph[11].push(Arc::new(5, 3, true));
+        rn.graph[11].push(Arc::new(7, 3, true));
+        rn.graph[11].push(Arc::new(10, 1, true));
+        rn.graph[11].push(Arc::new(12, 1, true));
+        rn.graph[12].push(Arc::new(3, 2, true));
+        rn.graph[12].push(Arc::new(4, 3, true));
+        rn.graph[12].push(Arc::new(11, 1, true));
+        rn.graph[13].push(Arc::new(1, 4, true));
+        rn.graph[13].push(Arc::new(2, 5, true));
+        rn.graph[13].push(Arc::new(8, 2, true));
+        rn.graph[13].push(Arc::new(10, 1, true));
+
+        let mut shortcuts_hist = vec![0; 5];
+        let mut edge_difference_hist = vec![0; 5];
+        let mut ch = ContractionHierarchies::new(&mut rn);
+        for i in 1..14 {
+            let (shortcuts, edge_differences) = ch.contract_node(i);
+            if i != 10 && i != 11 {
+                assert_eq!(shortcuts, 0);
+            }
+            else {
+                assert_eq!(shortcuts, 1);
+            }
+            match shortcuts {
+                0 => shortcuts_hist[0] += 1,
+                1 => shortcuts_hist[1] += 1,
+                2 => shortcuts_hist[2] += 1,
+                3 => shortcuts_hist[3] += 1,
+                4..=u32::MAX => shortcuts_hist[4] += 1
+            }
+            match edge_differences {
+                i32::MIN..=-3 => edge_difference_hist[0] += 1,
+                -2 => edge_difference_hist[1] += 1,
+                -1..=1 => edge_difference_hist[2] += 1,
+                2 => edge_difference_hist[3] += 1,
+                3..=i32::MAX => edge_difference_hist[4] += 1
+            }
+        }
+        assert_eq!(rn.graph.iter().map(|edges| edges.iter().count()).sum::<usize>(), 46);
+        assert_eq!(rn.graph[11].iter().find(|arc| arc.to_node == 13).unwrap().cost, 2);
+        assert_eq!(rn.graph[13].iter().find(|arc| arc.to_node == 11).unwrap().cost, 2);
+        assert_eq!(rn.graph[12].iter().find(|arc| arc.to_node == 13).unwrap().cost, 3);
+        assert_eq!(rn.graph[13].iter().find(|arc| arc.to_node == 12).unwrap().cost, 3);
+        println!("----- Node Contraction (L) -----");
+    }
 
     #[test]
     fn saarland_osm() {
@@ -622,6 +709,44 @@ mod tests {
     }
 
     #[test]
+    fn saarland_node_contraction() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let num_contractions = 1000;
+        let mut total_contraction_time = Duration::ZERO;
+        let mut shortcuts_hist = vec![0; 5];
+        let mut edge_difference_hist = vec![0; 5];
+        let mut ch = ContractionHierarchies::new(&mut rn);
+        ch.compute_random_node_ordering();
+        ch.set_max_num_settled_nodes(20);
+        for i in 0..num_contractions {
+            let now = Instant::now();
+            let (shortcuts, edge_differences) = ch.contract_node(i);
+            total_contraction_time += now.elapsed();
+            match shortcuts {
+                0 => shortcuts_hist[0] += 1,
+                1 => shortcuts_hist[1] += 1,
+                2 => shortcuts_hist[2] += 1,
+                3 => shortcuts_hist[3] += 1,
+                4..=u32::MAX => shortcuts_hist[4] += 1
+            }
+            match edge_differences {
+                i32::MIN..=-3 => edge_difference_hist[0] += 1,
+                -2 => edge_difference_hist[1] += 1,
+                -1..=1 => edge_difference_hist[2] += 1,
+                2 => edge_difference_hist[3] += 1,
+                3..=i32::MAX => edge_difference_hist[4] += 1
+            }
+        }
+        println!("----- Node Contraction (S) -----");
+        println!("Average contraction time:  {} µs", total_contraction_time.as_secs_f64() * 1_000_000.0 / num_contractions as f64);
+        println!("Shortcuts histogram: {} / {} / {} / {} / {}", shortcuts_hist[0], shortcuts_hist[1], shortcuts_hist[2], shortcuts_hist[3], shortcuts_hist[4]);
+        println!("Edge difference histogram: {} / {} / {} / {} / {}", edge_difference_hist[0], edge_difference_hist[1], edge_difference_hist[2], edge_difference_hist[3], edge_difference_hist[4]);
+        assert_eq!(shortcuts_hist.iter().sum::<usize>(), num_contractions);
+        assert_eq!(edge_difference_hist.iter().sum::<usize>(), num_contractions);
+    }
+
+    #[test]
     fn baden_wuerttemberg_osm() {
         let now = Instant::now();
         let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
@@ -750,5 +875,43 @@ mod tests {
         println!("Average query time: {} s", total_elapsed_time.as_secs_f32() / 100.0);
         println!("Average cost: {}", total_cost / 100);
         println!("Average settled nodes: {}", total_settled_nodes / 100);
+    }
+
+    #[test]
+    fn baden_wuerttemberg_node_contraction() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let num_contractions = 1000;
+        let mut total_contraction_time = Duration::ZERO;
+        let mut shortcuts_hist = vec![0; 5];
+        let mut edge_difference_hist = vec![0; 5];
+        let mut ch = ContractionHierarchies::new(&mut rn);
+        ch.compute_random_node_ordering();
+        ch.set_max_num_settled_nodes(20);
+        for i in 0..num_contractions {
+            let now = Instant::now();
+            let (shortcuts, edge_differences) = ch.contract_node(i);
+            total_contraction_time += now.elapsed();
+            match shortcuts {
+                0 => shortcuts_hist[0] += 1,
+                1 => shortcuts_hist[1] += 1,
+                2 => shortcuts_hist[2] += 1,
+                3 => shortcuts_hist[3] += 1,
+                4..=u32::MAX => shortcuts_hist[4] += 1
+            }
+            match edge_differences {
+                i32::MIN..=-3 => edge_difference_hist[0] += 1,
+                -2 => edge_difference_hist[1] += 1,
+                -1..=1 => edge_difference_hist[2] += 1,
+                2 => edge_difference_hist[3] += 1,
+                3..=i32::MAX => edge_difference_hist[4] += 1
+            }
+        }
+        println!("----- Node Contraction (BW) -----");
+        println!("Average contraction time:  {} µs", total_contraction_time.as_secs_f64() * 1_000_000.0 / num_contractions as f64);
+        println!("Shortcuts histogram: {} / {} / {} / {} / {}", shortcuts_hist[0], shortcuts_hist[1], shortcuts_hist[2], shortcuts_hist[3], shortcuts_hist[4]);
+        println!("Edge difference histogram: {} / {} / {} / {} / {}", edge_difference_hist[0], edge_difference_hist[1], edge_difference_hist[2], edge_difference_hist[3], edge_difference_hist[4]);
+        assert_eq!(shortcuts_hist.iter().sum::<usize>(), num_contractions);
+        assert_eq!(edge_difference_hist.iter().sum::<usize>(), num_contractions);
     }
 }
