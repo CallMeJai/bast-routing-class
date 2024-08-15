@@ -1,7 +1,7 @@
 use osmpbfreader::{NodeId, OsmObj};
 use itertools::Itertools;
 use geographiclib_rs::{Geodesic, InverseGeodesic};
-use std::{cmp::Reverse, collections::{BinaryHeap, HashMap}, path::Path};
+use std::{cmp::Reverse, collections::{BinaryHeap, HashMap, HashSet}, path::Path};
 use rand::{rngs::ThreadRng, seq::IteratorRandom, seq::SliceRandom};
 
 #[derive(Copy, Clone, Debug)]
@@ -519,33 +519,34 @@ impl<'a> ContractionHierarchies<'a> {
         self.node_ordering.shuffle(&mut self.rng);
     }
 
-    pub fn contract_node(&mut self, i: usize) -> (u32, i32) {
-        let mut shortcuts: i32 = 0;
-        let mut num_arcs_removed: i32 = 0;
-        let v = self.node_ordering[i];
+    pub fn contract_node(&mut self, n: usize) -> (u32, i32) {
+        let mut shortcuts = 0;
+        let mut num_arcs_removed = 0;
+        let v = self.node_ordering[n];
         // finding in-/out-bound nodes
-        let adjacent_nodes = self.rn.graph[v].iter().filter(|x| x.arc_flag).map(|x| x.to_node).collect::<Vec<_>>();
+        let adjacent_nodes = self.rn.graph[v].iter().filter(|x| x.arc_flag).map(|x| x.to_node).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
         // calculating D_ijs
-        let d: Vec<Vec<_>> = adjacent_nodes.iter().map(
-            |&u|
-            adjacent_nodes.iter().map(
-                |&w|
-                if u == w {
-                    0
-                } else {
-                    self.rn.graph[v].iter().find(|arc| arc.to_node == u).unwrap().cost
-                     + self.rn.graph[v].iter().find(|arc| arc.to_node == w).unwrap().cost
+        let mut d = vec![vec![0; adjacent_nodes.len()]; adjacent_nodes.len()];
+        for (i, &u) in adjacent_nodes.iter().enumerate() {
+            let u_cost = self.rn.graph[v].iter().filter(|arc| arc.arc_flag)
+            .find(|arc| arc.to_node == u).unwrap().cost;
+            for j in 0..d[i].len() {
+                if j != i {
+                    d[i][j] += u_cost;
+                    d[j][i] += u_cost;
                 }
-            ).collect()
-        ).collect();
+            }
+        }
         // removing arcs adjacent to v
         for arc in self.rn.graph[v].iter_mut() {
-            num_arcs_removed += 1;
-            arc.arc_flag = false;
+            if arc.arc_flag {
+                num_arcs_removed += 1;
+                arc.arc_flag = false;
+            }
         }
         for &n in adjacent_nodes.iter() {
             for arc in self.rn.graph[n].iter_mut() {
-                if arc.to_node == v {
+                if arc.arc_flag && arc.to_node == v {
                     arc.arc_flag = false;
                 }
             }
