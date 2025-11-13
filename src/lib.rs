@@ -492,6 +492,8 @@ pub struct ContractionHierarchies<'a> {
     dists: Vec<u64>,
     cost_upper_bound: u64,
     max_num_settled_nodes: u64,
+    order_of_node: HashMap<NodeId, usize>,
+    num_settled_nodes: u64,
 }
 
 impl<'a> ContractionHierarchies<'a> {
@@ -512,6 +514,8 @@ impl<'a> ContractionHierarchies<'a> {
             dists: vec![u64::MAX; num_nodes],
             cost_upper_bound: u64::MAX,
             max_num_settled_nodes: u64::MAX,
+            order_of_node: HashMap::new(),
+            num_settled_nodes: 0,
         }
     }
 
@@ -519,9 +523,10 @@ impl<'a> ContractionHierarchies<'a> {
         self.node_ordering.shuffle(&mut self.rng);
     }
 
-    pub fn contract_node(&mut self, n: usize) -> (u32, i32) {
+    fn contract_node(&mut self, n: usize, dry_run: bool) -> (u32, i32) {
         let mut shortcuts = 0;
         let mut num_arcs_removed = 0;
+        let mut removed_arcs_indices = Vec::new();
         let v = self.node_ordering[n];
         // finding in-/out-bound nodes
         let adjacent_nodes = self.rn.graph[v].iter().filter(|x| x.arc_flag).map(|x| x.to_node).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
@@ -538,16 +543,22 @@ impl<'a> ContractionHierarchies<'a> {
             }
         }
         // removing arcs adjacent to v
-        for arc in self.rn.graph[v].iter_mut() {
+        for (i, arc) in self.rn.graph[v].iter_mut().enumerate() {
             if arc.arc_flag {
                 num_arcs_removed += 1;
                 arc.arc_flag = false;
+                if dry_run {
+                    removed_arcs_indices.push((v, i));
+                }
             }
         }
         for &n in adjacent_nodes.iter() {
-            for arc in self.rn.graph[n].iter_mut() {
+            for (i, arc) in self.rn.graph[n].iter_mut().enumerate() {
                 if arc.arc_flag && arc.to_node == v {
                     arc.arc_flag = false;
+                    if dry_run {
+                        removed_arcs_indices.push((n, i));
+                    }
                 }
             }
         }
@@ -558,9 +569,16 @@ impl<'a> ContractionHierarchies<'a> {
             for (j, &w) in adjacent_nodes.iter().enumerate() {
                 if self.dists[w] > d[i][j] as u64 {
                     shortcuts += 1;
-                    self.rn.graph[u].push(Arc{to_node: w, cost: d[i][j], arc_flag: true});
-                    self.rn.graph[w].push(Arc{to_node: u, cost: d[i][j], arc_flag: true});
+                    if !dry_run {    
+                        self.rn.graph[u].push(Arc{to_node: w, cost: d[i][j], arc_flag: true});
+                        self.rn.graph[w].push(Arc{to_node: u, cost: d[i][j], arc_flag: true});
+                    }
                 }
+            }
+        }
+        if dry_run {
+            for (x, y) in removed_arcs_indices {
+                self.rn.graph[x][y].arc_flag = true;
             }
         }
         (shortcuts as u32, shortcuts - num_arcs_removed)
@@ -584,10 +602,10 @@ impl<'a> ContractionHierarchies<'a> {
             self.settled_nodes[closest_node] = true;
             num_settled_nodes += 1;
             if cost > self.cost_upper_bound {
-                return;
+                break;
             }
             if num_settled_nodes >= self.max_num_settled_nodes {
-                return;
+                break;
             }
             let edges = &self.rn.graph[closest_node];
             for &Arc{to_node: dest, cost, arc_flag} in edges {
@@ -608,6 +626,7 @@ impl<'a> ContractionHierarchies<'a> {
                 self.dists[dest] = cost_from_closest;
             }
         }
+        self.num_settled_nodes = num_settled_nodes;
     }
 
 
@@ -617,6 +636,69 @@ impl<'a> ContractionHierarchies<'a> {
 
     pub fn set_max_num_settled_nodes(&mut self, num: u64) {
         self.max_num_settled_nodes = num;
+    }
+
+    pub fn precompute(&mut self) -> u32 {
+        let mut total_shortcuts = 0;
+        // compute initial edge differences
+        let mut pq = BinaryHeap::new();
+        for i in 0..self.node_ordering.len() {
+            let (_, edge_difference) = self.contract_node(i, true);
+            pq.push((Reverse(edge_difference), i));
+        }
+        // actually contract all nodes
+        let mut contracted_nodes = HashSet::new();
+        for i in 0..self.node_ordering.len() {
+            if let Some((Reverse(mut prev_ed), mut node)) = pq.pop() {
+                // check that hasn't already been contracted or edge difference has increased
+                loop {
+                    while contracted_nodes.contains(&node) {
+                        (Reverse(prev_ed), node) = pq.pop().unwrap();
+                    }
+                    let (_, edge_difference) = self.contract_node(node, true);
+                    if prev_ed < edge_difference {
+                        pq.push((Reverse(edge_difference), node));
+                        (Reverse(prev_ed), node) = pq.pop().unwrap();
+                    } else {
+                        break;
+                    }
+                }
+                contracted_nodes.insert(node);
+                self.order_of_node.insert(self.rn.nodes[self.node_ordering[node]].node_id, i);
+                let (shortcuts, _) = self.contract_node(node, false);
+                total_shortcuts += shortcuts;
+            }
+        }
+        // re-flag edges for upward graph
+        for i in 0..self.node_ordering.len() {
+            let order = self.order_of_node.get(&self.rn.nodes[self.node_ordering[i]].node_id).unwrap();
+            for edge in self.rn.graph[self.node_ordering[i]].iter_mut() {
+                if self.order_of_node[&self.rn.nodes[edge.to_node].node_id] > *order && !edge.arc_flag {
+                    edge.arc_flag = true;
+                }
+            }
+        }
+        total_shortcuts
+    }
+    
+    pub fn compute_shortest_path(&mut self, source: usize, target: usize) -> Result<u64, String> {
+        self.set_max_num_settled_nodes(u64::MAX);
+        self.set_cost_upper_bound(u64::MAX);
+        self.dijkstra(source);
+        let num_settled_nodes = self.num_settled_nodes;
+        let mut dists = vec![u64::MAX; self.rn.nodes.len()];
+        for &n in self.visited_nodes.iter() {
+            dists[n] = self.dists[n];
+        }
+        let visited_nodes = self.visited_nodes.clone();
+        self.dijkstra(target);
+        let common_nodes: Vec<usize> = visited_nodes.into_iter().filter(|n| self.visited_nodes.contains(n)).collect();
+        let mut full_dists = vec![u64::MAX; dists.len()];
+        for n in common_nodes.into_iter() {
+            full_dists[n] = dists[n] + self.dists[n];
+        }
+        self.num_settled_nodes += num_settled_nodes;
+        Ok(full_dists.into_iter().min().unwrap())
     }
 }
 
@@ -682,7 +764,7 @@ mod tests {
 
         let mut ch = ContractionHierarchies::new(&mut rn);
         for i in 1..14 {
-            let (shortcuts, _) = ch.contract_node(i);
+            let (shortcuts, _) = ch.contract_node(i, false);
             if i != 10 && i != 11 {
                 assert_eq!(shortcuts, 0);
             }
@@ -837,13 +919,15 @@ mod tests {
         let mut total_contraction_time = Duration::ZERO;
         let mut shortcuts_hist = [0; 5];
         let mut edge_difference_hist = [0; 5];
+        let mut total_shortcuts = 0;
         let mut ch = ContractionHierarchies::new(&mut rn);
         ch.compute_random_node_ordering();
         ch.set_max_num_settled_nodes(20);
         for i in 0..num_contractions {
             let now = Instant::now();
-            let (shortcuts, edge_differences) = ch.contract_node(i);
+            let (shortcuts, edge_differences) = ch.contract_node(i, false);
             total_contraction_time += now.elapsed();
+            total_shortcuts += shortcuts;
             match shortcuts {
                 0 => shortcuts_hist[0] += 1,
                 1 => shortcuts_hist[1] += 1,
@@ -863,8 +947,36 @@ mod tests {
         println!("Average contraction time:  {} µs", total_contraction_time.as_secs_f64() * 1_000_000.0 / num_contractions as f64);
         println!("Shortcuts histogram: {} / {} / {} / {} / {}", shortcuts_hist[0], shortcuts_hist[1], shortcuts_hist[2], shortcuts_hist[3], shortcuts_hist[4]);
         println!("Edge difference histogram: {} / {} / {} / {} / {}", edge_difference_hist[0], edge_difference_hist[1], edge_difference_hist[2], edge_difference_hist[3], edge_difference_hist[4]);
+        println!("Shortcuts per contraction: {}", total_shortcuts as f64 / num_contractions as f64);
         assert_eq!(shortcuts_hist.iter().sum::<usize>(), num_contractions);
         assert_eq!(edge_difference_hist.iter().sum::<usize>(), num_contractions);
+    }
+
+    #[test]
+    fn saarland_contraction_hierarchies() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/saarland.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut ch = ContractionHierarchies::new(&mut rn);
+        ch.set_max_num_settled_nodes(20);
+        let now = Instant::now();
+        let shortcuts = ch.precompute();
+        let precompute_time = now.elapsed();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_cost = 0;
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_settled_nodes = 0;
+        for (src, dst) in (0..ch.rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
+            let now = Instant::now();
+            total_cost += ch.compute_shortest_path(*src, *dst).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += ch.num_settled_nodes;
+        }
+        println!("----- Contraction Hierarchies (S) -----");
+        println!("Precompute time:  {} s", precompute_time.as_secs_f64());
+        println!("Total shortcuts: {}", shortcuts);
+        println!("Average query time: {} s", total_elapsed_time.as_secs_f64() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
     }
 
     #[test]
@@ -1011,7 +1123,7 @@ mod tests {
         ch.set_max_num_settled_nodes(20);
         for i in 0..num_contractions {
             let now = Instant::now();
-            let (shortcuts, edge_differences) = ch.contract_node(i);
+            let (shortcuts, edge_differences) = ch.contract_node(i, false);
             total_contraction_time += now.elapsed();
             match shortcuts {
                 0 => shortcuts_hist[0] += 1,
@@ -1034,5 +1146,32 @@ mod tests {
         println!("Edge difference histogram: {} / {} / {} / {} / {}", edge_difference_hist[0], edge_difference_hist[1], edge_difference_hist[2], edge_difference_hist[3], edge_difference_hist[4]);
         assert_eq!(shortcuts_hist.iter().sum::<usize>(), num_contractions);
         assert_eq!(edge_difference_hist.iter().sum::<usize>(), num_contractions);
+    }
+    
+    #[test]
+    fn baden_wuerttemberg_contraction_hierarchies() {
+        let mut rn = RoadNetwork::read_from_osm_file("rsrc/baden-wuerttemberg.osm.pbf").unwrap();
+        rn.reduce_to_largest_connected_component();
+        let mut ch = ContractionHierarchies::new(&mut rn);
+        ch.set_max_num_settled_nodes(20);
+        let now = Instant::now();
+        let shortcuts = ch.precompute();
+        let precompute_time = now.elapsed();
+        let mut rng = &mut rand::thread_rng();
+        let mut total_cost = 0;
+        let mut total_elapsed_time = Duration::ZERO;
+        let mut total_settled_nodes = 0;
+        for (src, dst) in (0..ch.rn.nodes.len()).choose_multiple(&mut rng, 200).iter().tuples() {
+            let now = Instant::now();
+            total_cost += ch.compute_shortest_path(*src, *dst).unwrap();
+            total_elapsed_time += now.elapsed();
+            total_settled_nodes += ch.num_settled_nodes;
+        }
+        println!("----- Contraction Hierarchies (BW) -----");
+        println!("Precompute time:  {} s", precompute_time.as_secs_f64());
+        println!("Total shortcuts: {}", shortcuts);
+        println!("Average query time: {} s", total_elapsed_time.as_secs_f64() / 100.0);
+        println!("Average cost: {}", total_cost / 100);
+        println!("Average settled nodes: {}", total_settled_nodes / 100);
     }
 }
