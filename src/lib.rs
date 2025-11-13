@@ -209,7 +209,7 @@ pub struct DijkstrasAlgorithm<'a> {
 }
 
 impl DijkstrasAlgorithm<'_> {
-    pub fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm {
+    pub fn new(rn: &RoadNetwork) -> DijkstrasAlgorithm<'_> {
         DijkstrasAlgorithm{ 
             rn, 
             visited_nodes : vec![usize::MAX; rn.nodes.len()], 
